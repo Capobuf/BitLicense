@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -19,6 +20,16 @@ class Workstation extends Model
     public function endpoint(): BelongsTo
     {
         return $this->belongsTo(Endpoint::class);
+    }
+
+    public function coverages(): HasMany
+    {
+        return $this->hasMany(Coverage::class);
+    }
+
+    public function coverageAssignments(): HasMany
+    {
+        return $this->hasMany(CoverageAssignment::class);
     }
 
     public function linkEndpoint(Endpoint $endpoint): void
