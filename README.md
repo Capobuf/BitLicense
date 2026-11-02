@@ -56,6 +56,25 @@ GravityZone o SMTP prima che sia disponibile il relativo pannello protetto.
 
 ## Verifiche
 
+### Configurazione GravityZone
+
+Accedere come amministratore e aprire **Integrazione GravityZone**
+(`/admin/gravityzone`). Inserire l'URL base API della propria console,
+fino a `/api`, e la chiave nel campo protetto; premere **Salva configurazione**.
+Il salvataggio non effettua richieste API. La chiave è cifrata a riposo,
+non viene ricaricata nel browser e il campo viene svuotato dopo ogni risposta.
+Lasciarlo vuoto in un salvataggio successivo conserva la chiave esistente.
+
+**Verifica connessione** richiede una conferma ed esegue esclusivamente
+la lettura `getCompaniesList` con la configurazione già salvata. Non importa
+dati e non modifica GravityZone. Gli operatori non accedono a queste impostazioni.
+Le credenziali non vanno comunicate in chat o inserite nei file del progetto.
+Il collaudo reale richiede l'inserimento della chiave da parte del committente
+e il suo comando esplicito di ripresa. Fino ad allora sono usate soltanto fixture
+documentali, con i limiti descritti in [docs/gravityzone-api.md](docs/gravityzone-api.md).
+
+### Controlli automatici
+
 ```sh
 composer validate --strict
 composer check-platform-reqs

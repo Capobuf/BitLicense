@@ -3,6 +3,7 @@
 return [
     'required' => 'Compila il campo :attribute.',
     'email' => 'Inserisci un indirizzo email valido.',
+    'url' => 'Inserisci un URL valido per :attribute.',
     'string' => 'Il campo :attribute deve contenere del testo.',
     'confirmed' => 'La conferma del campo :attribute non corrisponde.',
     'current_password' => 'La password attuale non è corretta.',

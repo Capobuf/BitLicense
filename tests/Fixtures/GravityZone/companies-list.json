@@ -1,0 +1,14 @@
+{
+    "id": "103d7b05-ec02-481b-9ed6-c07b97de2b7a",
+    "jsonrpc": "2.0",
+    "result": [
+        {
+            "id": "000000000000000000000001",
+            "name": "Azienda esempio 1"
+        },
+        {
+            "id": "000000000000000000000002",
+            "name": "Azienda esempio 2"
+        }
+    ]
+}
