@@ -9,12 +9,32 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
-#[Fillable(['company_id', 'name', 'notes'])]
+#[Fillable(['company_id', 'name', 'notes', 'company_product_id', 'commercial_description', 'installed_on'])]
 class Workstation extends Model
 {
+    protected static function booted(): void
+    {
+        static::saving(function (Workstation $workstation): void {
+            if ($workstation->company_product_id !== null && ! CompanyProduct::query()
+                ->whereKey($workstation->company_product_id)->where('company_id', $workstation->company_id)->exists()) {
+                throw ValidationException::withMessages(['company_product_id' => 'Scegli un prodotto della stessa azienda della postazione.']);
+            }
+        });
+    }
+
+    protected function casts(): array
+    {
+        return ['installed_on' => 'date'];
+    }
+
     public function company(): BelongsTo
     {
         return $this->belongsTo(Company::class);
+    }
+
+    public function companyProduct(): BelongsTo
+    {
+        return $this->belongsTo(CompanyProduct::class);
     }
 
     public function endpoint(): BelongsTo

@@ -8,6 +8,7 @@ use App\Models\Coverage;
 use App\Models\CoverageAssignment;
 use App\Models\Workstation;
 use App\Services\CoverageService;
+use App\Support\Euro;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Actions\ActionGroup;
@@ -81,7 +82,7 @@ class CoverageResource extends Resource
             DatePicker::make('ends_on')->label('Ultimo giorno coperto, incluso')->required()->native(false)->displayFormat('d/m/Y')
                 ->afterOrEqual('starts_on')->helperText('Il periodo successivo può iniziare dal giorno seguente.'),
             TextInput::make('amount')->label('Importo per postazione')->prefix('€')->inputMode('decimal')->required()
-                ->rules(['string', 'regex:/^\d{1,9}(?:[.,]\d{1,2})?$/D'])->maxLength(12)
+                ->rules(['string', 'regex:'.Euro::PATTERN])->maxLength(12)
                 ->validationMessages(['regex' => 'Inserisci un importo non negativo, senza separatori delle migliaia e con al massimo due decimali.'])
                 ->helperText('Importo per ciascuna postazione selezionata, con eventuali add-on inclusi. Usa la virgola o il punto per i decimali.'),
             TextInput::make('invoice_reference')->label('Riferimento fattura')->maxLength(255),
@@ -95,11 +96,21 @@ class CoverageResource extends Resource
             ->authorize('create', Coverage::class)->schema([
                 Select::make('company_id')->label('Azienda')->required()->searchable()->live()
                     ->options(fn (): array => Company::query()->orderBy('name')->pluck('name', 'id')->all())
-                    ->afterStateUpdated(fn (Set $set) => $set('workstation_ids', [])),
-                Select::make('workstation_ids')->label('Postazioni')->multiple()->searchable()->required()->minItems(1)
+                    ->afterStateUpdated(function (Get $get, Set $set): void {
+                        if (filled($get('workstation_ids'))) {
+                            $set('amount', null);
+                        }
+                        $set('workstation_ids', []);
+                    }),
+                Select::make('workstation_ids')->label('Postazioni')->multiple()->searchable()->required()->minItems(1)->live()
                     ->options(fn (Get $get): array => Workstation::query()->where('company_id', $get('company_id'))->orderBy('name')->get(['id', 'name'])
                         ->mapWithKeys(fn (Workstation $workstation): array => [$workstation->id => '#'.$workstation->id.' · '.$workstation->name])->all())
-                    ->helperText('Una copertura distinta per ogni postazione, con lo stesso periodo e importo per ciascuna. Nessuna data viene ricavata da GravityZone.'),
+                    ->afterStateUpdated(function (Get $get, Set $set, mixed $old): void {
+                        if (blank($get('amount')) || $get('amount') === static::suggestedAmount($get, $old)) {
+                            $set('amount', static::suggestedAmount($get, $get('workstation_ids')));
+                        }
+                    })
+                    ->helperText('Una copertura distinta per postazione. Se tutte hanno lo stesso prodotto aziendale, viene proposto il suo prezzo annuale abituale: controlla il periodo e modifica liberamente l’importo. Con prodotti diversi o non indicati, inserisci l’importo manualmente.'),
                 ...static::periodFields(),
             ])->action(function (array $data, Schema $schema): void {
                 Gate::authorize('create', Coverage::class);
@@ -134,7 +145,7 @@ class CoverageResource extends Resource
                     ->beforeFormFilled(fn (Coverage $record, ManageCoverages $livewire) => $livewire->expectedAssignments = [$record->id => $record->workstation_id])
                     ->fillForm(fn (Coverage $record): array => [
                         'starts_on' => $record->starts_on->toDateString(), 'ends_on' => $record->ends_on->toDateString(),
-                        'amount' => intdiv($record->price_cents, 100).'.'.str_pad((string) ($record->price_cents % 100), 2, '0', STR_PAD_LEFT),
+                        'amount' => Euro::fromCents($record->price_cents),
                         'invoice_reference' => $record->invoice_reference, 'quote_reference' => $record->quote_reference,
                     ])->schema([
                         TextEntry::make('company.name')->label('Azienda'),
@@ -180,6 +191,21 @@ class CoverageResource extends Resource
                     }),
             ])->label('Azioni')])->defaultSort('ends_on')->emptyStateHeading('Nessuna copertura commerciale trovata')
             ->emptyStateDescription('Registra il periodo acquistato per una o più postazioni. La scadenza tecnica GravityZone resta separata.');
+    }
+
+    private static function suggestedAmount(Get $get, mixed $ids): ?string
+    {
+        if (! is_array($ids) || $ids === []) {
+            return null;
+        }
+
+        $workstations = Workstation::query()->where('company_id', $get('company_id'))->whereIn('id', $ids)->with('companyProduct')->get();
+        if ($workstations->count() !== count($ids) || $workstations->contains(fn (Workstation $workstation): bool => $workstation->companyProduct === null)
+            || $workstations->pluck('company_product_id')->unique()->count() !== 1) {
+            return null;
+        }
+
+        return Euro::fromCents($workstations->first()->companyProduct->annual_price_cents);
     }
 
     private static function expectedCoverage(Coverage $record, ManageCoverages $livewire): Coverage
