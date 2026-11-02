@@ -1,0 +1,22 @@
+{
+    "id": "103d7b05-ec02-481b-9ed6-c07b97de2b7a",
+    "jsonrpc": "2.0",
+    "result": {
+        "page": 2,
+        "perPage": 100,
+        "hasMoreRecords": false,
+        "items": [
+            {
+                "id": "endpoint-3",
+                "name": "Postazione esempio 3",
+                "type": 5,
+                "parentId": "ad-folder-1",
+                "companyId": "company-1",
+                "details": {
+                    "isManaged": true,
+                    "operatingSystemVersion": "Linux Ubuntu 20.04.3 LTS"
+                }
+            }
+        ]
+    }
+}

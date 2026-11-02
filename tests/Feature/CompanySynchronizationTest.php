@@ -200,7 +200,7 @@ class CompanySynchronizationTest extends TestCase
 
     public function test_missing_configuration_or_another_sync_blocks_requests_and_the_lock_is_released_after_failure(): void
     {
-        $lock = Cache::lock('gravityzone-company-sync', 3600);
+        $lock = Cache::lock('gravityzone-sync', 3600);
         $this->assertTrue($lock->get());
         $this->artisan('bitlicense:sync-companies')->assertFailed();
         Http::assertNothingSent();

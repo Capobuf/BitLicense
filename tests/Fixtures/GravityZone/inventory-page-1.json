@@ -1,0 +1,34 @@
+{
+    "id": "103d7b05-ec02-481b-9ed6-c07b97de2b7a",
+    "jsonrpc": "2.0",
+    "result": {
+        "page": 1,
+        "perPage": 100,
+        "pagesCount": 2,
+        "hasMoreRecords": true,
+        "items": [
+            {
+                "id": "endpoint-1",
+                "name": "Postazione esempio 1",
+                "type": 5,
+                "parentId": "ad-folder-1",
+                "companyId": "company-1",
+                "details": {
+                    "isManaged": true,
+                    "operatingSystemVersion": "Windows Server 2019 Standard"
+                }
+            },
+            {
+                "id": "endpoint-2",
+                "name": "Postazione esempio 2",
+                "type": 5,
+                "parentId": "ad-folder-2",
+                "companyId": "company-1",
+                "details": {
+                    "isManaged": true,
+                    "operatingSystemVersion": "Windows Server 2016 Standard"
+                }
+            }
+        ]
+    }
+}

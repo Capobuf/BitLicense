@@ -1,6 +1,7 @@
 <?php
 
 use App\Integrations\GravityZone\CompanySynchronizer;
+use App\Integrations\GravityZone\EndpointSynchronizer;
 use App\Integrations\GravityZone\GravityZoneException;
 use App\Models\User;
 use Illuminate\Support\Facades\Artisan;
@@ -41,3 +42,18 @@ Artisan::command('bitlicense:sync-companies', function () {
 })->purpose('Legge aziende e licenze tecniche GravityZone preservando contatti e note locali');
 
 Schedule::command('bitlicense:sync-companies')->dailyAt('03:00')->timezone('Europe/Rome');
+
+Artisan::command('bitlicense:sync-endpoints', function () {
+    try {
+        $count = app(EndpointSynchronizer::class)->sync();
+        $this->info("Import completato. Endpoint rilevati: {$count}. Nessuna copertura commerciale creata.");
+
+        return 0;
+    } catch (GravityZoneException $exception) {
+        $this->error($exception->getMessage());
+
+        return 1;
+    }
+})->purpose('Importa gli endpoint GravityZone preservando postazioni e associazioni locali');
+
+Schedule::command('bitlicense:sync-endpoints')->dailyAt('04:00')->timezone('Europe/Rome');

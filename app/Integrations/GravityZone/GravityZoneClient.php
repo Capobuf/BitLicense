@@ -10,12 +10,13 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Sleep;
 use JsonException;
 use stdClass;
 
 class GravityZoneClient
 {
-    public const READ_ONLY_METHODS = ['getCompaniesList', 'getLicenseInfo'];
+    public const READ_ONLY_METHODS = ['getCompaniesList', 'getLicenseInfo', 'getNetworkInventoryItems'];
 
     private const REQUEST_ID = '103d7b05-ec02-481b-9ed6-c07b97de2b7a';
 
@@ -107,6 +108,111 @@ class GravityZoneClient
             },
             'technical_expires_on' => $expiry,
         ];
+    }
+
+    /** @return list<array{id: string, name: string, platform: ?string, is_managed: ?bool, is_isolated: ?bool}> */
+    public function getNetworkInventoryItems(GravityZoneSetting $settings, string $companyId): array
+    {
+        if (trim($companyId) === '' || mb_strlen($companyId) > 255) {
+            throw new GravityZoneException('ID azienda GravityZone non valido.');
+        }
+
+        $parents = [$companyId];
+
+        // AD computers require an explicit read below the discovered AD folder.
+        foreach ($this->inventoryItems($settings, $companyId, $companyId, ['details' => ['name' => 'Active Directory']]) as $item) {
+            if ($item->type === 4 && $item->name === 'Active Directory' && $item->id !== $companyId) {
+                $parents[] = $item->id;
+            }
+        }
+
+        $endpoints = [];
+
+        foreach ($parents as $parentId) {
+            foreach ($this->inventoryItems($settings, $parentId, $companyId, [
+                'type' => ['computers' => true, 'virtualMachines' => true, 'ec2Instances' => true],
+                'depth' => ['allItemsRecursively' => true],
+            ]) as $item) {
+                if (! in_array($item->type, [5, 6, 7], true)) {
+                    continue;
+                }
+
+                $details = $item->details ?? null;
+
+                if ($details !== null && ! $details instanceof stdClass) {
+                    throw new GravityZoneException('La risposta GravityZone contiene dettagli endpoint non validi.');
+                }
+
+                $platform = $details->operatingSystemVersion ?? null;
+                $managed = $details->isManaged ?? null;
+                $isolated = $details->isIsolated ?? null;
+
+                if (($platform !== null && ! is_string($platform)) ||
+                    ($managed !== null && ! is_bool($managed)) ||
+                    ($isolated !== null && ! is_bool($isolated))) {
+                    throw new GravityZoneException('La risposta GravityZone contiene dettagli endpoint non validi.');
+                }
+
+                // Company and AD queries may deliberately return the same endpoint.
+                $endpoints[$item->id] = [
+                    'id' => $item->id,
+                    'name' => $item->name,
+                    'platform' => is_string($platform) && trim($platform) !== '' ? $platform : null,
+                    'is_managed' => $managed,
+                    'is_isolated' => $isolated,
+                ];
+            }
+        }
+
+        return array_values($endpoints);
+    }
+
+    /** @return iterable<stdClass> */
+    private function inventoryItems(GravityZoneSetting $settings, string $parentId, string $companyId, array $filters): iterable
+    {
+        $seen = [];
+
+        for ($page = 1; $page <= 1000; $page++) {
+            try {
+                $connection = $this->connection($settings);
+                Sleep::for(250)->milliseconds();
+                $response = $connection->post('/v1.1/jsonrpc/network', [
+                    'jsonrpc' => '2.0',
+                    'id' => self::REQUEST_ID,
+                    'method' => 'getNetworkInventoryItems',
+                    'params' => ['parentId' => $parentId, 'page' => $page, 'perPage' => 100, 'filters' => $filters],
+                ]);
+            } catch (ConnectionException) {
+                throw new GravityZoneException('Impossibile contattare GravityZone: errore di rete o tempo di attesa scaduto. Riprova più tardi.', stopSynchronization: true);
+            }
+
+            $result = $this->responsePayload($response)->result ?? null;
+
+            if (! $result instanceof stdClass || ($result->page ?? null) !== $page ||
+                ($result->perPage ?? null) !== 100 || ! is_bool($result->hasMoreRecords ?? null) ||
+                ! is_array($result->items ?? null) || ! array_is_list($result->items) ||
+                count($result->items) > 100 || ($result->hasMoreRecords && $result->items === [])) {
+                throw new GravityZoneException('La risposta GravityZone contiene una pagina inventario non valida.');
+            }
+
+            foreach ($result->items as $item) {
+                if (! $item instanceof stdClass ||
+                    ! is_string($item->id ?? null) || trim($item->id) === '' || mb_strlen($item->id) > 255 ||
+                    isset($seen[$item->id]) || ! is_string($item->name ?? null) || trim($item->name) === '' ||
+                    ($item->companyId ?? null) !== $companyId || ! is_int($item->type ?? null)) {
+                    throw new GravityZoneException('La risposta GravityZone contiene elementi inventario incompleti, duplicati o di un’altra azienda.');
+                }
+
+                $seen[$item->id] = true;
+                yield $item;
+            }
+
+            if (! $result->hasMoreRecords) {
+                return;
+            }
+        }
+
+        throw new GravityZoneException('La lettura GravityZone supera il limite di sicurezza di 1000 pagine per contenitore. Nessun elenco parziale viene importato.');
     }
 
     private function connection(GravityZoneSetting $settings): PendingRequest

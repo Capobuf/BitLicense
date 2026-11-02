@@ -13,7 +13,7 @@ class CompanySynchronizer
 {
     public function sync(): int
     {
-        $lock = Cache::lock('gravityzone-company-sync', 3600);
+        $lock = Cache::lock('gravityzone-sync', 3600);
 
         $acquired = false;
 
@@ -21,7 +21,7 @@ class CompanySynchronizer
             $acquired = $lock->get();
 
             if (! $acquired) {
-                throw new GravityZoneException('Una sincronizzazione aziende è già in corso. Attendi prima di riprovare.');
+                throw new GravityZoneException('Una sincronizzazione GravityZone è già in corso. Attendi prima di riprovare.');
             }
 
             $settings = GravityZoneSetting::find(1);

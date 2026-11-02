@@ -1,7 +1,8 @@
 # Contratto GravityZone verificato
 
-Verifica documentale: 2 novembre 2026. Il client espone soltanto due letture
-esplicite: `getCompaniesList` (Network) e `getLicenseInfo` (Licensing).
+Verifica documentale: 2 novembre 2026. Il client espone soltanto tre letture
+esplicite: `getCompaniesList`, `getNetworkInventoryItems` (Network) e
+`getLicenseInfo` (Licensing).
 Non contiene un invocatore RPC generico o metodi che modificano GravityZone.
 
 La base configurata termina in `/api`. Le richieste POST usano JSON-RPC 2.0,
@@ -39,6 +40,46 @@ Nessun campo descrive la copertura commerciale delle singole postazioni.
 La chiave deve avere accesso anche al servizio Licensing.
 Fonte: [getLicenseInfo](https://www.bitdefender.com/business/support/en/77211-127105-getlicenseinfo.html).
 
+## Inventario endpoint
+
+`getNetworkInventoryItems` usa `/v1.1/jsonrpc/network`, `parentId`, `page`
+e `perPage: 100`. Per ogni azienda legge ricorsivamente computer, macchine
+virtuali e istanze EC2 (tipi 5/6/7). Esegue inoltre la ricerca documentata
+dei gruppi Active Directory e la lettura ricorsiva dai relativi ID;
+le sovrapposizioni fra azienda e gruppi vengono deduplicate per ID.
+
+`hasMoreRecords` guida la continuazione; `page`, `perPage` e lista `items`
+sono validati. Totali e numero di pagine non sono necessari sulle pagine
+successive. Una pagina incoerente, un ID duplicato entro lo stesso contenitore
+o un errore successivo impediscono l’import parziale dell’azienda. Oltre
+1000 pagine per contenitore si segnala un errore, senza troncare l’import.
+Si verifica `companyId` prima di attribuire i dati all’azienda locale.
+
+Si conservano soltanto `id`, `name` e i dettagli disponibili
+`operatingSystemVersion`, `isManaged`, `isIsolated`. I campi mancanti sono
+sconosciuti; non si inventano stato online, prodotto commerciale o attivazione.
+Non si acquisiscono IP, MAC, SID o `firstSeen`. Le richieste sono distanziate
+di 250 ms; eventuali 429 interrompono le successive, senza retry.
+Fonte: [getNetworkInventoryItems](https://www.bitdefender.com/business/support/en/77211-128494-getnetworkinventoryitems.html).
+
+L’ID API è univoco; il nome è aggiornabile e non provoca associazioni locali.
+Prima di cambiare i dati si controllano i conflitti di appartenenza fra tutte
+le aziende lette. Gli inventari ambigui conservano i dati precedenti.
+Gli aggiornamenti sono transazionali per azienda. Le postazioni locali
+hanno una relazione opzionale e univoca con l’endpoint: l’operatore la sceglie
+esplicitamente, con validazione e blocco delle righe in transazione.
+Una variazione remota di azienda conserva l’azienda locale della postazione.
+
+Le fixture `inventory-ad-folders.json`, `inventory-page-1.json` e
+`inventory-page-2.json` sono proiezioni anonime dell’esempio AD ufficiale;
+i tre computer sono distribuiti intenzionalmente su due pagine simulate.
+Non sono snapshot reali né riproduzioni delle incongruenze dell’esempio
+v1.1 generale. Il primo collaudo reale ha importato 102 endpoint unici di
+16 aziende, senza errori o postazioni locali automatiche. Un secondo import
+ha mantenuto i 102 ID e il collegamento a una postazione manuale creata e
+associata dal browser; nome e note locali sono rimasti invariati. La postazione
+di prova è stata poi rimossa dal solo database di sviluppo.
+
 ## Ripetibilità, errori e limiti
 
 L’elenco viene acquisito e validato prima di una transazione locale.
@@ -55,7 +96,8 @@ automatici. HTTP 429 mostra `Retry-After` come secondi residui, anche quando
 l’header contiene una data RFC 7231.
 Fonte: [limiti API](https://www.bitdefender.com/business/support/en/77211-394430-api-rate-limits.html).
 
-Un lock cache condiviso da comando e pannello impedisce avvii sovrapposti.
+Un lock cache condiviso da comandi e pannello impedisce avvii sovrapposti
+anche fra import aziende e endpoint.
 Il lock scade dopo un’ora in caso di terminazione anomala. Il pannello mostra
 ultimo tentativo, ultima lettura elenco riuscita ed errori; ogni azienda
 conserva ultima presenza e ultima lettura licenza riuscita. Un processo
