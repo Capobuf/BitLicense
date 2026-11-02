@@ -11,16 +11,23 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
-#[Fillable(['name', 'email', 'password'])]
+#[Fillable(['name', 'email', 'password', 'role', 'is_active'])]
 #[Hidden(['password', 'remember_token'])]
 class User extends Authenticatable implements FilamentUser
 {
+    public const ROLES = ['admin' => 'Amministratore', 'operator' => 'Operatore'];
+
     /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable;
 
     public function canAccessPanel(Panel $panel): bool
     {
-        return true;
+        return $this->is_active && array_key_exists($this->role, self::ROLES);
+    }
+
+    public function isAdministrator(): bool
+    {
+        return $this->is_active && $this->role === 'admin';
     }
 
     /**
@@ -33,6 +40,7 @@ class User extends Authenticatable implements FilamentUser
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'is_active' => 'boolean',
         ];
     }
 }
