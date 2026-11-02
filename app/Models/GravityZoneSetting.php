@@ -14,6 +14,10 @@ class GravityZoneSetting extends Model
 
     protected function casts(): array
     {
-        return ['api_key' => 'encrypted'];
+        return [
+            'api_key' => 'encrypted',
+            'companies_sync_attempted_at' => 'datetime',
+            'companies_synced_at' => 'datetime',
+        ];
     }
 }

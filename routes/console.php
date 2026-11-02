@@ -1,7 +1,10 @@
 <?php
 
+use App\Integrations\GravityZone\CompanySynchronizer;
+use App\Integrations\GravityZone\GravityZoneException;
 use App\Models\User;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Schedule;
 
 Artisan::command('bitlicense:bootstrap-admin {email}', function () {
     if (User::query()->where('role', 'admin')->where('is_active', true)->exists()) {
@@ -23,3 +26,18 @@ Artisan::command('bitlicense:bootstrap-admin {email}', function () {
 
     return 0;
 })->purpose('Abilita il primo amministratore a partire da un utente già creato');
+
+Artisan::command('bitlicense:sync-companies', function () {
+    try {
+        $count = app(CompanySynchronizer::class)->sync();
+        $this->info("Sincronizzazione completata. Aziende presenti: {$count}. Nessuna modifica a GravityZone.");
+
+        return 0;
+    } catch (GravityZoneException $exception) {
+        $this->error($exception->getMessage());
+
+        return 1;
+    }
+})->purpose('Legge aziende e licenze tecniche GravityZone preservando contatti e note locali');
+
+Schedule::command('bitlicense:sync-companies')->dailyAt('03:00')->timezone('Europe/Rome');

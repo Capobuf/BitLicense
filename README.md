@@ -73,6 +73,38 @@ Il collaudo reale richiede l'inserimento della chiave da parte del committente
 e il suo comando esplicito di ripresa. Fino ad allora sono usate soltanto fixture
 documentali, con i limiti descritti in [docs/gravityzone-api.md](docs/gravityzone-api.md).
 
+### Aziende e sincronizzazione
+
+La voce **Aziende** (`/admin/aziende`) mostra aziende, scadenza tecnica della
+licenza principale e stato della lettura. Amministratori e operatori possono
+cercare le aziende e modificare contatti e note locali. Solo gli amministratori
+avviano **Sincronizza aziende**, con conferma esplicita. Il caricamento della
+pagina non esegue chiamate API. Le scadenze mancanti sono indicate come non
+disponibili; i dati precedenti restano visibili con un avviso se la lettura fallisce.
+Le aziende assenti dal nuovo elenco vengono conservate con il relativo stato.
+Nessuna sincronizzazione crea coperture commerciali o invia email.
+
+Lo stesso processo è disponibile da CLI:
+
+```sh
+php artisan bitlicense:sync-companies
+php artisan schedule:list
+```
+
+Il comando restituisce un codice di errore anche se il solo elenco è stato
+aggiornato e alcune licenze non sono state lette. Il riepilogo del pannello e
+il dettaglio azienda indicano il risultato. La chiave richiede i permessi di
+lettura Network e Licensing. Le esecuzioni contemporanee vengono rifiutate;
+un’interruzione anomala può lasciare il lock occupato per un massimo di un’ora.
+
+La pianificazione nativa è giornaliera alle 03:00 Europe/Rome. In sviluppo
+si può usare `php artisan schedule:work`; per un ambiente di sviluppo con Cron
+la voce standard esegue ogni minuto `php /percorso/BitLicense/artisan schedule:run`,
+come utente dell’applicazione. Nessun Cron è stato installato automaticamente.
+Le chiamate sono sincrone: per elenchi molto più grandi delle 16 aziende collaudate,
+preferire il comando CLI e verificare i limiti di durata PHP del proprio ambiente.
+Non sono necessari queue worker, servizi permanenti o dipendenze aggiuntive.
+
 ### Controlli automatici
 
 ```sh

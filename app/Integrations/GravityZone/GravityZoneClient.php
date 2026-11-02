@@ -7,13 +7,15 @@ use DateTimeImmutable;
 use DateTimeZone;
 use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use JsonException;
 use stdClass;
 
 class GravityZoneClient
 {
-    public const READ_ONLY_METHODS = ['getCompaniesList'];
+    public const READ_ONLY_METHODS = ['getCompaniesList', 'getLicenseInfo'];
 
     private const REQUEST_ID = '103d7b05-ec02-481b-9ed6-c07b97de2b7a';
 
@@ -21,9 +23,98 @@ class GravityZoneClient
     public function getCompaniesList(GravityZoneSetting $settings): array
     {
         try {
+            $response = $this->connection($settings)->post('/v1.0/jsonrpc/network', [
+                'jsonrpc' => '2.0',
+                'id' => self::REQUEST_ID,
+                'method' => 'getCompaniesList',
+                'params' => [],
+            ]);
+        } catch (ConnectionException) {
+            throw new GravityZoneException('Impossibile contattare GravityZone: errore di rete o tempo di attesa scaduto. Riprova più tardi.', stopSynchronization: true);
+        }
+
+        $payload = $this->responsePayload($response);
+
+        if (! isset($payload->result) || ! is_array($payload->result) || ! array_is_list($payload->result)) {
+            throw new GravityZoneException('La risposta GravityZone non contiene un elenco aziende valido.');
+        }
+
+        $companies = [];
+
+        foreach ($payload->result as $company) {
+            if (
+                ! $company instanceof stdClass ||
+                ! is_string($company->id ?? null) || trim($company->id) === '' || mb_strlen($company->id) > 255 ||
+                in_array($company->id, array_column($companies, 'id'), true) ||
+                ! is_string($company->name ?? null) || trim($company->name) === ''
+            ) {
+                throw new GravityZoneException('La risposta GravityZone contiene dati azienda incompleti o non validi.');
+            }
+
+            $companies[] = ['id' => $company->id, 'name' => $company->name];
+        }
+
+        return $companies;
+    }
+
+    /** @return array{technical_license_type: string, technical_expires_on: ?string} */
+    public function getLicenseInfo(GravityZoneSetting $settings, string $companyId): array
+    {
+        if (trim($companyId) === '' || mb_strlen($companyId) > 255) {
+            throw new GravityZoneException('ID azienda GravityZone non valido.');
+        }
+
+        try {
+            $response = $this->connection($settings)->post('/v1.0/jsonrpc/licensing', [
+                'jsonrpc' => '2.0',
+                'id' => self::REQUEST_ID,
+                'method' => 'getLicenseInfo',
+                'params' => ['companyId' => $companyId],
+            ]);
+        } catch (ConnectionException) {
+            throw new GravityZoneException('Impossibile contattare GravityZone: errore di rete o tempo di attesa scaduto. Riprova più tardi.', stopSynchronization: true);
+        }
+
+        $license = $this->responsePayload($response)->result ?? null;
+
+        if (! $license instanceof stdClass || ! is_int($license->subscriptionType ?? null)) {
+            throw new GravityZoneException('La risposta GravityZone non contiene dati di licenza aziendale validi.');
+        }
+
+        $expiry = $license->expiryDate ?? null;
+
+        if ($expiry !== null) {
+            $date = is_string($expiry) && preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/D', $expiry)
+                ? DateTimeImmutable::createFromFormat('!Y-m-d\TH:i:s', $expiry, new DateTimeZone('UTC')) : false;
+
+            if (! $date || DateTimeImmutable::getLastErrors() !== false || $date->format('Y-m-d\TH:i:s') !== $expiry) {
+                throw new GravityZoneException('La risposta GravityZone contiene una scadenza tecnica non valida.');
+            }
+
+            // The API omits the timezone: preserve its calendar date without conversion.
+            $expiry = $date->format('Y-m-d');
+        }
+
+        return [
+            'technical_license_type' => match ($license->subscriptionType) {
+                1 => 'Prova',
+                2 => 'Licenza',
+                3 => 'Mensile',
+                4 => 'Licenza mensile di prova',
+                5 => 'Abbonamento mensile di prova',
+                6 => 'FRAT',
+                default => 'Codice '.$license->subscriptionType,
+            },
+            'technical_expires_on' => $expiry,
+        ];
+    }
+
+    private function connection(GravityZoneSetting $settings): PendingRequest
+    {
+        try {
             $key = $settings->api_key;
         } catch (DecryptException) {
-            throw new GravityZoneException('La chiave GravityZone salvata non è leggibile. Inseriscila nuovamente nelle impostazioni.');
+            throw new GravityZoneException('La chiave GravityZone salvata non è leggibile. Inseriscila nuovamente nelle impostazioni.', stopSynchronization: true);
         }
 
         $url = rtrim($settings->api_url ?? '', '/');
@@ -37,25 +128,15 @@ class GravityZoneClient
             isset($parts['user']) || isset($parts['pass']) ||
             isset($parts['query']) || isset($parts['fragment'])
         ) {
-            throw new GravityZoneException('Configura un URL API HTTPS valido e una chiave GravityZone prima di verificare la connessione.');
+            throw new GravityZoneException('Configura un URL API HTTPS valido e una chiave GravityZone prima di leggere i dati.', stopSynchronization: true);
         }
 
-        try {
-            $response = Http::acceptJson()
-                ->withBasicAuth($key, '')
-                ->withoutRedirecting()
-                ->connectTimeout(5)
-                ->timeout(20)
-                ->post($url.'/v1.0/jsonrpc/network', [
-                    'jsonrpc' => '2.0',
-                    'id' => self::REQUEST_ID,
-                    'method' => 'getCompaniesList',
-                    'params' => [],
-                ]);
-        } catch (ConnectionException) {
-            throw new GravityZoneException('Impossibile contattare GravityZone: errore di rete o tempo di attesa scaduto. Riprova più tardi.');
-        }
+        return Http::baseUrl($url)->acceptJson()->withBasicAuth($key, '')
+            ->withoutRedirecting()->connectTimeout(5)->timeout(20);
+    }
 
+    private function responsePayload(Response $response): stdClass
+    {
         if ($response->status() === 429) {
             $retryAfter = $response->header('Retry-After');
             $seconds = ctype_digit($retryAfter) ? (int) $retryAfter : null;
@@ -69,15 +150,15 @@ class GravityZoneClient
 
             throw new GravityZoneException($seconds === null
                 ? 'Limite richieste GravityZone raggiunto. Attendi prima di riprovare.'
-                : "Limite richieste GravityZone raggiunto. Riprova tra {$seconds} secondi.");
+                : "Limite richieste GravityZone raggiunto. Riprova tra {$seconds} secondi.", stopSynchronization: true);
         }
 
         if (in_array($response->status(), [401, 403], true)) {
-            throw new GravityZoneException('Accesso GravityZone negato. Verifica la chiave API e le sue autorizzazioni.');
+            throw new GravityZoneException('Accesso GravityZone negato. Verifica la chiave API e le sue autorizzazioni.', stopSynchronization: true);
         }
 
         if (! $response->successful()) {
-            throw new GravityZoneException('GravityZone ha restituito un errore HTTP. Verifica l’URL API o riprova più tardi.');
+            throw new GravityZoneException('GravityZone ha restituito un errore HTTP. Verifica l’URL API o riprova più tardi.', stopSynchronization: true);
         }
 
         try {
@@ -91,27 +172,9 @@ class GravityZoneClient
         }
 
         if (property_exists($payload, 'error')) {
-            throw new GravityZoneException('GravityZone ha rifiutato la richiesta API. Verifica la chiave e le autorizzazioni per la lettura delle aziende.');
+            throw new GravityZoneException('GravityZone ha rifiutato la richiesta API. Verifica la chiave e le autorizzazioni per la lettura richiesta.');
         }
 
-        if (! isset($payload->result) || ! is_array($payload->result) || ! array_is_list($payload->result)) {
-            throw new GravityZoneException('La risposta GravityZone non contiene un elenco aziende valido.');
-        }
-
-        $companies = [];
-
-        foreach ($payload->result as $company) {
-            if (
-                ! $company instanceof stdClass ||
-                ! is_string($company->id ?? null) || trim($company->id) === '' ||
-                ! is_string($company->name ?? null) || trim($company->name) === ''
-            ) {
-                throw new GravityZoneException('La risposta GravityZone contiene dati azienda incompleti o non validi.');
-            }
-
-            $companies[] = ['id' => $company->id, 'name' => $company->name];
-        }
-
-        return $companies;
+        return $payload;
     }
 }

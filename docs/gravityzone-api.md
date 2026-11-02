@@ -1,40 +1,81 @@
 # Contratto GravityZone verificato
 
-Verifica documentale: 2 novembre 2026. Nessun POC o payload live disponibile
-durante questa implementazione. Le fixture derivano dalla documentazione
-ufficiale, non dimostrano che le credenziali dell'installazione funzionino.
+Verifica documentale: 2 novembre 2026. Il client espone soltanto due letture
+esplicite: `getCompaniesList` (Network) e `getLicenseInfo` (Licensing).
+Non contiene un invocatore RPC generico o metodi che modificano GravityZone.
 
-Il solo metodo implementato è `getCompaniesList`, lettura del servizio Network.
-Il client non espone un invocatore RPC generico né operazioni mutanti.
-La richiesta usa POST JSON-RPC 2.0 sul suffisso `/v1.0/jsonrpc/network`;
-la base configurata termina in `/api`. L'autenticazione HTTP Basic usa la
-chiave come nome utente e una password vuota. TLS rimane verificato e i
-redirect sono rifiutati per non inoltrare le credenziali ad altre destinazioni.
-La connessione ha timeout di 5 secondi, la richiesta di 20 secondi.
-Fonte: [esempi API ufficiali](https://www.bitdefender.com/business/support/en/77211-141188-api-usage-examples.html).
+La base configurata termina in `/api`. Le richieste POST usano JSON-RPC 2.0,
+HTTP Basic con la chiave come utente e password vuota, TLS verificato,
+redirect disabilitati e timeout di connessione/richiesta di 5/20 secondi.
+Errori HTTP/RPC, autenticazione, rete e formati non validi producono messaggi
+locali senza corpo remoto, chiavi o eccezioni concatenate.
+Fonte: [esempi API](https://www.bitdefender.com/business/support/en/77211-141188-api-usage-examples.html).
 
-La richiesta invia `params: []`. Il risultato documentato è una lista di aziende,
-ciascuna con `id` e `name`; entrambi sono richiesti come stringhe non vuote.
-Il client controlla versione RPC e corrispondenza dell'ID di richiesta,
-ammette una lista vuota e restituisce soltanto questi due campi.
-Non vengono ricavate scadenze tecniche o descrizioni commerciali da questo metodo.
-`getCompaniesList` non documenta paginazione: non vengono aggiunti `page` o
-`perPage`. La paginazione sarà gestita nella sincronizzazione (#6) soltanto
-per metodi necessari che la supportano ufficialmente.
-Fonte: [contratto getCompaniesList](https://www.bitdefender.com/business/support/en/77211-128478-getcompanieslist.html).
+## Aziende
 
-`tests/Fixtures/GravityZone/companies-list.json` riproduce esattamente la
-struttura della risposta nell'esempio del contratto, sostituendo soltanto
-ID e nomi delle aziende. L'ID RPC fisso dell'esempio
-`103d7b05-ec02-481b-9ed6-c07b97de2b7a` è mantenuto anche nelle richieste.
+`getCompaniesList` usa `/v1.0/jsonrpc/network` e `params: []`. Il risultato
+è una lista, anche vuota, di oggetti con `id` e `name`. ID vuoti, duplicati,
+oltre 255 caratteri o record incompleti invalidano l’intero elenco prima
+del salvataggio. Nessuna paginazione è documentata per questo metodo;
+non vengono aggiunti parametri presunti.
+Fonte: [getCompaniesList](https://www.bitdefender.com/business/support/en/77211-128478-getcompanieslist.html).
 
-Un HTTP 429 produce un errore leggibile; se presente, `Retry-After` viene
-interpretato come secondi o data HTTP RFC 7231 e mostrato come attesa residua.
-Non sono previsti attese bloccanti o tentativi automatici.
-Errori di trasporto, autenticazione, HTTP, RPC e formato producono messaggi
-locali senza corpo remoto, URL, header, chiavi o eccezioni concatenate.
-Fonte: [limiti API ufficiali](https://www.bitdefender.com/business/support/en/77209-394430-api-rate-limits.html).
+## Licenza tecnica aziendale
 
-Prima del collaudo reale il cliente deve inserire la chiave nel pannello
-amministrativo protetto e autorizzare esplicitamente la ripresa. Non inserire
-credenziali nei test, nella chat, nei log o nel repository.
+`getLicenseInfo` usa `/v1.0/jsonrpc/licensing` con il `companyId` esplicito.
+Legge la licenza principale; non richiede `returnAllProducts` e non aggrega
+le diverse scadenze di `additionalLicenses`. Il risultato degli esempi è
+un oggetto, benché la prosa del contratto lo definisca Array.
+
+Vengono conservati soltanto il tipo di abbonamento `subscriptionType`
+(1 prova, 2 licenza, 3 mensile, 4 licenza mensile di prova, 5 abbonamento
+mensile di prova, 6 FRAT) e la parte calendario di `expiryDate`.
+La data può mancare o essere nulla: viene mostrata come **Non disponibile**.
+Il formato documentato è `YYYY-MM-DDTHH:mm:ss`, privo di fuso dichiarato;
+non viene convertito in UTC o Europe/Rome. Una data non valida provoca un
+errore e conserva il precedente dato noto, segnalato come non aggiornato.
+Chiavi licenza e altri dettagli non necessari vengono scartati.
+Nessun campo descrive la copertura commerciale delle singole postazioni.
+La chiave deve avere accesso anche al servizio Licensing.
+Fonte: [getLicenseInfo](https://www.bitdefender.com/business/support/en/77211-127105-getlicenseinfo.html).
+
+## Ripetibilità, errori e limiti
+
+L’elenco viene acquisito e validato prima di una transazione locale.
+L’upsert usa l’ID esterno univoco e modifica esclusivamente campi tecnici.
+Aziende non restituite vengono segnate assenti, senza cancellarle.
+Contatti e note locali non rientrano negli aggiornamenti di sincronizzazione.
+Le licenze sono acquisite separatamente: errori puntuali non bloccano le
+altre aziende; errori di rete, HTTP e 429 interrompono le letture successive.
+La mancata acquisizione dell’elenco non modifica le aziende esistenti.
+
+Le letture Licensing sono distanziate di almeno 250 ms, sotto il limite
+documentato di cinque richieste al secondo. Non vengono eseguiti retry
+automatici. HTTP 429 mostra `Retry-After` come secondi residui, anche quando
+l’header contiene una data RFC 7231.
+Fonte: [limiti API](https://www.bitdefender.com/business/support/en/77211-394430-api-rate-limits.html).
+
+Un lock cache condiviso da comando e pannello impedisce avvii sovrapposti.
+Il lock scade dopo un’ora in caso di terminazione anomala. Il pannello mostra
+ultimo tentativo, ultima lettura elenco riuscita ed errori; ogni azienda
+conserva ultima presenza e ultima lettura licenza riuscita. Un processo
+interrotto lascia visibile lo stato non completato. La cache database nativa
+non richiede Redis o worker.
+
+## Fixture e collaudo
+
+Le fixture `companies-list.json`, `license-yearly.json` e `license-monthly.json`
+in `tests/Fixtures/GravityZone` riproducono gli esempi ufficiali completi,
+sostituendo nomi/ID aziendali e chiavi licenza con dati fittizi. Tutte usano
+l’ID RPC fisso `103d7b05-ec02-481b-9ed6-c07b97de2b7a` delle richieste.
+I test non usano credenziali reali e bloccano richieste HTTP non simulate.
+
+Il cliente ha inserito la chiave nel pannello e autorizzato la ripresa.
+`getCompaniesList` e `getLicenseInfo` sono stati verificati realmente su
+16 aziende: import dal pannello e successiva sincronizzazione da CLI senza
+duplicati, con contatto e nota locali temporanei conservati e poi rimossi.
+Tutte le 16 licenze hanno esposto una scadenza; nessun errore di lettura.
+Le fixture restano documentali: nessun payload cliente è salvato nel repository.
+I casi di errore, assenza e date mancanti sono verificati con fixture;
+non vengono provocati errori sul servizio reale.
+Non sono state eseguite operazioni mutanti su GravityZone.
