@@ -32,7 +32,7 @@ class PanelAccessTest extends TestCase
             ->assertHasNoFormErrors();
 
         $this->assertAuthenticatedAs($user);
-        $this->get('/admin')->assertOk()->assertSee('Benvenuto in BitLicense');
+        $this->get('/admin')->assertOk()->assertSee('Scadenzario e avvisi interni');
         $this->post('/admin/logout')->assertRedirect('/admin/login');
         $this->assertGuest();
     }
