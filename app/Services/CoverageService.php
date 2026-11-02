@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Coverage;
 use App\Models\CoverageAssignment;
 use App\Models\Workstation;
+use App\Support\Euro;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
@@ -87,12 +88,11 @@ class CoverageService
         $data = Validator::make($input, [
             'starts_on' => ['required', 'date', 'date_format:Y-m-d'],
             'ends_on' => ['required', 'date', 'date_format:Y-m-d', 'after_or_equal:starts_on'],
-            'amount' => ['required', 'string', 'regex:/^\d{1,9}(?:[.,]\d{1,2})?$/D'],
+            'amount' => ['required', 'string', 'regex:'.Euro::PATTERN],
             'invoice_reference' => ['nullable', 'string', 'max:255'],
             'quote_reference' => ['nullable', 'string', 'max:255'],
         ], ['amount.regex' => 'Inserisci un importo non negativo, senza separatori delle migliaia e con al massimo due decimali.'])->validate();
-        [$units, $decimals] = array_pad(explode('.', str_replace(',', '.', $data['amount'])), 2, '');
-        $data['price_cents'] = ((int) $units * 100) + (int) str_pad($decimals, 2, '0');
+        $data['price_cents'] = Euro::toCents($data['amount']);
         unset($data['amount']);
 
         return $data;

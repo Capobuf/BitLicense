@@ -154,6 +154,28 @@ sostituiti automaticamente e le coperture non vengono eliminate dal pannello.
 Importi, estremi inclusivi, atomicità e storico sono documentati in
 [docs/commercial-coverages.md](docs/commercial-coverages.md).
 
+### Schede commerciali e prodotti
+
+La scheda **Aziende** conserva anche i prodotti/edizioni descritti localmente,
+con il prezzo annuale abituale specifico di quell’azienda. Gli add-on sono
+compresi nel prezzo totale. Il contratto API verificato per l’inventario non
+identifica l’edizione commerciale acquistata per ciascun endpoint: il prodotto
+viene quindi scelto o descritto manualmente, senza dedurlo dalla piattaforma
+tecnica o dal tipo di licenza aziendale.
+
+Nella scheda **Postazioni** si possono indicare prodotto aziendale, descrizione
+commerciale, data di installazione/attivazione e note anche senza endpoint
+GravityZone. I dati tecnici restano in sola lettura, separati dai periodi,
+dagli importi e dai riferimenti fattura/preventivo delle coperture.
+
+Se nella nuova copertura tutte le postazioni selezionate hanno lo stesso
+prodotto aziendale, viene proposto il suo prezzo annuale abituale. L’operatore
+controlla il periodo e può modificare l’importo per ogni nuova copertura;
+con prodotti diversi o non indicati deve inserirlo manualmente. Il suggerimento
+non calcola ancora un pro-rata e non cambia coperture già registrate.
+Cambiare il prezzo abituale o il prodotto di una postazione non riscrive
+gli importi o i riferimenti degli acquisti precedenti.
+
 ### Controlli automatici
 
 ```sh

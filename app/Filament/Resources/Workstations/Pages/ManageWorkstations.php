@@ -15,6 +15,6 @@ class ManageWorkstations extends ManageRecords
 
     protected function getHeaderActions(): array
     {
-        return [CreateAction::make()->label('Nuova postazione')->modalHeading('Nuova postazione')->modalSubmitActionLabel('Crea postazione')->createAnother(false)->mutateDataUsing(fn (array $data): array => Arr::only($data, ['company_id', 'name', 'notes']))];
+        return [CreateAction::make()->label('Nuova postazione')->modalHeading('Nuova postazione')->modalSubmitActionLabel('Crea postazione')->createAnother(false)->mutateDataUsing(fn (array $data): array => Arr::only($data, ['company_id', 'name', 'notes', 'company_product_id', 'commercial_description', 'installed_on']))];
     }
 }
