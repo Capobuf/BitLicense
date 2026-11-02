@@ -49,4 +49,44 @@ class PanelAccessTest extends TestCase
 
         $this->assertGuest();
     }
+
+    public function test_a_disabled_user_cannot_log_in(): void
+    {
+        $user = User::factory()->create(['is_active' => false]);
+        Filament::setCurrentPanel(Filament::getPanel('admin'));
+
+        Livewire::test(Login::class)
+            ->fillForm(['email' => $user->email, 'password' => 'password'])
+            ->call('authenticate')
+            ->assertHasFormErrors(['email']);
+
+        $this->assertGuest();
+    }
+
+    public function test_disabling_a_user_blocks_an_existing_session(): void
+    {
+        $user = User::factory()->create();
+        Filament::setCurrentPanel(Filament::getPanel('admin'));
+
+        Livewire::test(Login::class)
+            ->fillForm(['email' => $user->email, 'password' => 'password'])
+            ->call('authenticate');
+
+        $this->get('/admin')->assertOk();
+        User::query()->whereKey($user->id)->update(['is_active' => false]);
+        $this->app['auth']->guard()->forgetUser();
+
+        $this->get('/admin')->assertForbidden();
+        $this->get('/admin/profile')->assertForbidden();
+    }
+
+    public function test_both_roles_can_access_the_panel_and_native_profile(): void
+    {
+        foreach (array_keys(User::ROLES) as $role) {
+            $this->actingAs(User::factory()->create(['role' => $role]));
+
+            $this->get('/admin')->assertOk();
+            $this->get('/admin/profile')->assertOk();
+        }
+    }
 }

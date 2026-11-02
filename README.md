@@ -30,10 +30,21 @@ Non usare credenziali o database di produzione.
 php artisan key:generate
 php artisan migrate
 php artisan make:filament-user
+php artisan bitlicense:bootstrap-admin indirizzo-scelto@example.test
 php artisan serve --host=127.0.0.1 --port=8000
 ```
 
 Aprire http://127.0.0.1:8000/admin e accedere con l'utente appena creato.
+Sostituire l'indirizzo di esempio con quello inserito durante `make:filament-user`;
+inserire la password al prompt, senza passarla come argomento di shell.
+Il comando di bootstrap promuove solo un account attivo esistente e funziona
+finché non esiste un amministratore attivo. Gli account nascono come operatori.
+L'amministratore crea, modifica e disabilita gli altri utenti dalla voce **Utenti**;
+le password iniziali sono impostate manualmente, senza email d'invito.
+Ogni utente può aggiornare i propri dati e password dal profilo personale.
+Il proprio ruolo e stato non sono modificabili dal pannello, per evitare di
+perdere accidentalmente l'ultimo accesso amministrativo. La disabilitazione
+blocca anche le sessioni già aperte alla richiesta successiva.
 Per un server di sviluppo remoto usare un inoltro SSH verso la porta locale.
 `composer dev` avvia lo stesso server sulla porta predefinita, senza altri processi.
 
@@ -53,7 +64,8 @@ vendor/bin/pint --test
 ```
 
 I test del pannello verificano autenticazione, rifiuto di credenziali errate,
-logout e protezione dell'accesso. Le migrazioni e la navigazione vanno verificate
+logout, ruoli, gestione utenti e rifiuto degli accessi disabilitati.
+Le migrazioni e la navigazione vanno verificate
 anche sul database MySQL/MariaDB di sviluppo; SQLite non sostituisce il collaudo
 del database destinato all'applicazione.
 
