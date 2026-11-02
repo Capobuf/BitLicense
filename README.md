@@ -176,6 +176,24 @@ non calcola ancora un pro-rata e non cambia coperture già registrate.
 Cambiare il prezzo abituale o il prodotto di una postazione non riscrive
 gli importi o i riferimenti degli acquisti precedenti.
 
+### Scadenzario e avvisi interni
+
+**Panoramica** raccoglie gli avvisi correnti distinguendo licenze tecniche
+aziendali, coperture commerciali delle postazioni ed endpoint da verificare.
+I filtri permettono di scegliere azienda, tipo, stato e periodo. La scadenza
+odierna è ancora coperta; gli avvisi di prossima scadenza considerano i 30 giorni
+successivi. Le date mancanti restano segnalate separatamente, senza inventarle.
+
+I periodi commerciali contigui già acquistati vengono letti come un intervallo
+continuo: un vecchio periodo rinnovato non continua a comparire scaduto.
+Una copertura futura separata da un intervallo scoperto non nasconde il problema;
+la data indicata in quel caso è il prossimo inizio, spiegato nella riga.
+
+Gli avvisi sono calcolati dai dati locali e aggiornati con il caricamento della
+pagina o **Aggiorna avvisi**. Non vengono accodate copie di notifiche nel database,
+eseguite chiamate API o inviate email ai clienti. Non servono un nuovo Cron,
+polling o worker. L’elenco non crea proposte e non conferma rinnovi automaticamente.
+
 ### Controlli automatici
 
 ```sh
