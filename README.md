@@ -136,6 +136,24 @@ impedisce sovrapposizioni con l’import aziende. Cron non è stato attivato.
 La paginazione e Active Directory sono descritti nel contratto API;
 la continuazione su più pagine è verificata con fixture documentali.
 
+### Coperture commerciali
+
+**Coperture commerciali** (`/admin/coperture`) consente a entrambi i ruoli
+attivi di registrare periodi e importi per una o più postazioni della stessa
+azienda. L’importo è applicato a ciascuna postazione; la creazione multipla
+è interamente annullata se una delle selezioni non è valida.
+
+La fine è l’ultimo giorno coperto, incluso. Non sono ammesse sovrapposizioni;
+le date non vengono ricavate da GravityZone. **Periodo e storico** mostra
+separatamente scadenza tecnica aziendale, copertura acquistata e assegnazioni.
+**Correggi copertura** aggiorna esplicitamente date, importo e riferimenti;
+**Trasferisci a un altro PC** conserva il periodo acquistato e registra
+il passaggio alla postazione sostitutiva. I periodi precedenti non vengono
+sostituiti automaticamente e le coperture non vengono eliminate dal pannello.
+
+Importi, estremi inclusivi, atomicità e storico sono documentati in
+[docs/commercial-coverages.md](docs/commercial-coverages.md).
+
 ### Controlli automatici
 
 ```sh
