@@ -1,0 +1,34 @@
+{
+    "id": "103d7b05-ec02-481b-9ed6-c07b97de2b7a",
+    "jsonrpc": "2.0",
+    "result": {
+        "subscriptionType": 2,
+        "isAddon": false,
+        "expiryDate": "2021-12-28T17:16:52",
+        "usedSlots": 0,
+        "totalSlots": 50,
+        "licenseKey": "FAKE-MAIN-LICENSE-TEST-ONLY",
+        "licensedServices": {
+            "mdrServiceFlavor": 1,
+            "mdrServiceStatus": 3,
+            "mdrStatusStartDate": "2023-07-17T10:52:03",
+            "mdrEnrollementStatus": 3
+        },
+        "additionalLicenses": [
+            {
+                "isAddon": false,
+                "expiryDate": "2021-12-28T17:16:52",
+                "usedSlots": 0,
+                "totalSlots": 50,
+                "licenseKey": "FAKE-ADDITIONAL-LICENSE-1-TEST-ONLY"
+            },
+            {
+                "isAddon": false,
+                "expiryDate": "2021-12-28T15:35:14",
+                "usedSlots": 0,
+                "totalSlots": 1,
+                "licenseKey": "FAKE-ADDITIONAL-LICENSE-2-TEST-ONLY"
+            }
+        ]
+    }
+}
