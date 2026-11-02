@@ -1,0 +1,46 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+
+#[Fillable(['company_id', 'name', 'notes'])]
+class Workstation extends Model
+{
+    public function company(): BelongsTo
+    {
+        return $this->belongsTo(Company::class);
+    }
+
+    public function endpoint(): BelongsTo
+    {
+        return $this->belongsTo(Endpoint::class);
+    }
+
+    public function linkEndpoint(Endpoint $endpoint): void
+    {
+        DB::transaction(function () use ($endpoint): void {
+            $remote = Endpoint::query()->lockForUpdate()->findOrFail($endpoint->id);
+            $local = self::query()->lockForUpdate()->findOrFail($this->id);
+
+            if ($local->endpoint_id === $remote->id) {
+                return;
+            }
+
+            if (! $remote->is_present || ! $remote->company->is_present || $local->company_id !== $remote->company_id) {
+                throw ValidationException::withMessages(['workstation_id' => 'Scegli una postazione della stessa azienda e un endpoint ancora rilevato.']);
+            }
+
+            if ($local->endpoint_id !== null || self::query()->where('endpoint_id', $remote->id)->exists()) {
+                throw ValidationException::withMessages(['workstation_id' => 'La postazione o l’endpoint sono già associati. Ricarica l’elenco e verifica il collegamento.']);
+            }
+
+            $local->forceFill(['endpoint_id' => $remote->id])->save();
+        });
+        $this->refresh();
+    }
+}

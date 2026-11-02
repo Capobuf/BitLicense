@@ -105,6 +105,37 @@ Le chiamate sono sincrone: per elenchi molto più grandi delle 16 aziende collau
 preferire il comando CLI e verificare i limiti di durata PHP del proprio ambiente.
 Non sono necessari queue worker, servizi permanenti o dipendenze aggiuntive.
 
+### Endpoint e postazioni locali
+
+**Endpoint GravityZone** (`/admin/endpoint`) è l’elenco tecnico importato.
+**Sincronizza endpoint**, riservato agli amministratori, legge i computer,
+le macchine virtuali e le istanze EC2 delle aziende già importate, compresi
+i gruppi Active Directory. I nuovi endpoint restano **Da verificare**;
+non vengono create postazioni locali o coperture commerciali automaticamente.
+
+Da **Postazioni** (`/admin/postazioni`) entrambi i ruoli possono creare una
+postazione manuale indicando azienda, nome locale e note. Dall’endpoint,
+**Associa postazione** richiede la scelta esplicita di una postazione libera
+della stessa azienda: gli ID locali distinguono anche i nomi uguali.
+**Crea postazione** consente invece una creazione esplicita già collegata.
+I nomi tecnici possono cambiare durante il sync; quelli locali restano invariati.
+Un nuovo ID dopo reinstallazione resta un endpoint distinto da verificare.
+
+Endpoint non più rilevati, postazioni e associazioni vengono conservati.
+Se GravityZone sposta un endpoint a un’altra azienda, la postazione mantiene
+l’azienda locale e viene segnalata l’associazione da verificare. Non sono
+previsti merge incerti, eliminazioni o riassegnazioni automatiche.
+Gli errori sono visibili globalmente e per azienda, anche senza endpoint.
+
+```sh
+php artisan bitlicense:sync-endpoints
+```
+
+Scheduler pianifica gli endpoint alle 04:00 Europe/Rome. Un lock condiviso
+impedisce sovrapposizioni con l’import aziende. Cron non è stato attivato.
+La paginazione e Active Directory sono descritti nel contratto API;
+la continuazione su più pagine è verificata con fixture documentali.
+
 ### Controlli automatici
 
 ```sh

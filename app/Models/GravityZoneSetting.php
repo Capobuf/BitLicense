@@ -15,6 +15,8 @@ class GravityZoneSetting extends Model
     protected function casts(): array
     {
         return [
+            'endpoints_sync_attempted_at' => 'datetime',
+            'endpoints_synced_at' => 'datetime',
             'api_key' => 'encrypted',
             'companies_sync_attempted_at' => 'datetime',
             'companies_synced_at' => 'datetime',

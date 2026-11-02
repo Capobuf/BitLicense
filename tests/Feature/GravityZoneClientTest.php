@@ -49,8 +49,8 @@ class GravityZoneClientTest extends TestCase
         );
         Http::assertSentCount(1);
 
-        $this->assertSame(['getCompaniesList', 'getLicenseInfo'], GravityZoneClient::READ_ONLY_METHODS);
-        $this->assertSame(['getCompaniesList', 'getLicenseInfo'], array_map(
+        $this->assertSame(['getCompaniesList', 'getLicenseInfo', 'getNetworkInventoryItems'], GravityZoneClient::READ_ONLY_METHODS);
+        $this->assertSame(['getCompaniesList', 'getLicenseInfo', 'getNetworkInventoryItems'], array_map(
             fn (ReflectionMethod $method): string => $method->getName(),
             (new ReflectionClass(GravityZoneClient::class))->getMethods(ReflectionMethod::IS_PUBLIC),
         ));

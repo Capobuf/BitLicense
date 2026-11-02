@@ -11,6 +11,8 @@ class Company extends Model
     protected function casts(): array
     {
         return [
+            'endpoints_sync_attempted_at' => 'datetime',
+            'endpoints_synced_at' => 'datetime',
             'technical_expires_on' => 'date',
             'license_synced_at' => 'datetime',
             'last_seen_at' => 'datetime',
