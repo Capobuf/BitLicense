@@ -46,7 +46,7 @@ Sostituire l'indirizzo di esempio con quello inserito durante `make:filament-use
 inserire la password al prompt, senza passarla come argomento di shell.
 Il comando di bootstrap promuove solo un account attivo esistente e funziona
 finché non esiste un amministratore attivo. Gli account nascono come operatori.
-L'amministratore crea, modifica e disabilita gli altri utenti da **Impostazioni → Utenti**;
+L'amministratore crea, modifica e disabilita gli altri utenti dalla scheda **Utenti** della pagina **Impostazioni**;
 le password iniziali sono impostate manualmente, senza email d'invito.
 Ogni utente può aggiornare i propri dati e password dal profilo personale.
 Il proprio ruolo e stato non sono modificabili dal pannello, per evitare di
@@ -65,8 +65,8 @@ GravityZone o SMTP prima che sia disponibile il relativo pannello protetto.
 
 ### Configurazione GravityZone
 
-Accedere come amministratore e aprire **Impostazioni → API**
-(`/admin/gravityzone`). Inserire l'URL base API della propria console,
+Accedere come amministratore e aprire **Impostazioni** (`/admin/impostazioni`),
+poi la scheda **API** (`/admin/impostazioni/gravityzone`). Inserire l'URL base API della propria console,
 fino a `/api`, e la chiave nel campo protetto; premere **Salva configurazione**.
 Il salvataggio non effettua richieste API. La chiave è cifrata a riposo,
 non viene ricaricata nel browser e il campo viene svuotato dopo ogni risposta.
@@ -74,7 +74,8 @@ Lasciarlo vuoto in un salvataggio successivo conserva la chiave esistente.
 
 **Verifica connessione** richiede una conferma ed esegue esclusivamente
 la lettura `getCompaniesList` con la configurazione già salvata. Non importa
-dati e non modifica GravityZone. Gli operatori non accedono a queste impostazioni.
+dati e non modifica GravityZone. La scheda **Utenti** (`/admin/impostazioni/utenti`) è nella stessa pagina.
+Gli operatori non accedono a Impostazioni né alle sue schede.
 Le credenziali non vanno comunicate in chat o inserite nei file del progetto.
 Il collaudo reale richiede l'inserimento della chiave da parte del committente
 e il suo comando esplicito di ripresa. Fino ad allora sono usate soltanto fixture
@@ -86,11 +87,19 @@ Dopo il login si apre **Licenze** (`/admin`). Il selettore ricercabile permette
 di scegliere un’azienda; la stessa tabella mostra il riepilogo della sua licenza
 tecnica GravityZone e i computer con prodotto aziendale da API, attivazione, scadenza commerciale
 e stato. Il riepilogo tecnico resta separato dalle date locali delle righe PC.
+**Tutte le Aziende** mostra una tabella distinta per ogni azienda, in ordine
+alfabetico, con nome, riepilogo e controlli propri. Il pulsante **Aggiungi PC
+manuale** di ciascuna tabella usa quella azienda.
 
 Un nuovo computer GravityZone compare automaticamente come **Da completare**.
-Cliccando la riga si apre una sola modale: nome tecnico e prodotto aziendale
+La matita o il clic sulla riga apre la modale di modifica, senza espansioni. Nome tecnico e prodotto aziendale
 sono in sola lettura; date, prezzo, riferimenti fattura/preventivo e note sono
 modificabili e facoltativi. **Salva** aggiorna direttamente quel computer.
+La colonna **Validità** mostra attivazione sopra e scadenza sotto. **Prezzo**
+resta visibile; **Rif. Preventivo** e **Rif. Fattura** compaiono solo quando
+almeno un computer dell’azienda ha il rispettivo valore. Le icone di filtri e
+colonne sono accanto alla ricerca, allineata a sinistra. Il gestore colonne
+permette di riordinare e scegliere le informazioni aggiuntive.
 Non occorre creare postazioni, prodotti di catalogo o coperture separate.
 Il prodotto viene aggiornato dalla lettura della licenza aziendale già prevista;
 se GravityZone non lo espone, compare **Non fornito dall’API**. Eventuali

@@ -17,7 +17,7 @@ use stdClass;
 
 class GravityZoneClient
 {
-    public const READ_ONLY_METHODS = ['getCompaniesList', 'getLicenseInfo', 'getNetworkInventoryItems'];
+    public const READ_ONLY_METHODS = ['getCompaniesList', 'getCompanyDetails', 'getLicenseInfo', 'getNetworkInventoryItems'];
 
     private const REQUEST_ID = '103d7b05-ec02-481b-9ed6-c07b97de2b7a';
 
@@ -59,6 +59,34 @@ class GravityZoneClient
         }
 
         return $companies;
+    }
+
+    /** @return array{is_suspended: ?bool} */
+    public function getCompanyDetails(GravityZoneSetting $settings, string $companyId): array
+    {
+        if (trim($companyId) === '' || mb_strlen($companyId) > 255) {
+            throw new GravityZoneException('ID azienda GravityZone non valido.');
+        }
+
+        try {
+            $response = $this->connection($settings)->post('/v1.0/jsonrpc/companies', [
+                'jsonrpc' => '2.0',
+                'id' => self::REQUEST_ID,
+                'method' => 'getCompanyDetails',
+                'params' => ['companyId' => $companyId],
+            ]);
+        } catch (ConnectionException) {
+            throw new GravityZoneException('Impossibile contattare GravityZone: errore di rete o tempo di attesa scaduto. Riprova più tardi.', stopSynchronization: true);
+        }
+
+        $company = $this->responsePayload($response)->result ?? null;
+
+        if (! $company instanceof stdClass || ($company->id ?? null) !== $companyId ||
+            (isset($company->isSuspended) && ! is_bool($company->isSuspended))) {
+            throw new GravityZoneException('La risposta GravityZone non contiene uno stato aziendale valido.');
+        }
+
+        return ['is_suspended' => $company->isSuspended ?? null];
     }
 
     /** @return array{technical_license_type: string, technical_expires_on: ?string, technical_product: ?string} */

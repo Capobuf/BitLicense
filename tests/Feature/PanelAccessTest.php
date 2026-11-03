@@ -2,10 +2,12 @@
 
 namespace Tests\Feature;
 
+use App\Filament\Clusters\Impostazioni;
 use App\Models\User;
 use Filament\Auth\Pages\Login;
 use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Livewire\Livewire;
 use Tests\TestCase;
 
@@ -78,6 +80,37 @@ class PanelAccessTest extends TestCase
 
         $this->get('/admin')->assertForbidden();
         $this->get('/admin/profile')->assertForbidden();
+    }
+
+    public function test_settings_has_one_navigation_item_and_two_native_tabs_for_administrators(): void
+    {
+        Http::preventStrayRequests();
+        $this->actingAs(User::factory()->administrator()->create());
+        Filament::setCurrentPanel(Filament::getPanel('admin'));
+
+        $this->get('/admin/impostazioni')->assertRedirect('/admin/impostazioni/gravityzone');
+        foreach (['gravityzone', 'utenti'] as $tab) {
+            $this->get('/admin/impostazioni/'.$tab)->assertOk()->assertSee('Impostazioni')
+                ->assertSee('fi-page-sub-navigation-tabs')->assertSee('API')->assertSee('Utenti');
+        }
+        $labels = collect(Filament::getNavigation())->flatMap(fn ($group) => $group->getItems())
+            ->map(fn ($item) => $item->getLabel())->values()->all();
+        $this->assertSame(['Licenze', 'Impostazioni'], $labels);
+        Http::assertNothingSent();
+    }
+
+    public function test_settings_entry_and_tabs_reject_operators_and_disabled_administrators(): void
+    {
+        Http::preventStrayRequests();
+        Filament::setCurrentPanel(Filament::getPanel('admin'));
+        foreach ([['role' => 'operator'], ['role' => 'admin', 'is_active' => false]] as $state) {
+            $this->actingAs(User::factory()->create($state));
+            foreach (['/admin/impostazioni', '/admin/impostazioni/gravityzone', '/admin/impostazioni/utenti'] as $path) {
+                $this->get($path)->assertForbidden();
+            }
+            Livewire::test(Impostazioni::class)->assertForbidden();
+        }
+        Http::assertNothingSent();
     }
 
     public function test_both_roles_can_access_the_panel_and_native_profile(): void

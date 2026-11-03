@@ -46,7 +46,7 @@ class CompanySynchronizer
                     'name' => $company['name'],
                     'last_seen_at' => $seenAt,
                     'is_present' => true,
-                    'sync_error' => 'La licenza non è stata aggiornata nell’ultimo tentativo.',
+                    'sync_error' => 'I dati tecnici aziendali non sono stati aggiornati nell’ultimo tentativo.',
                 ], $companies);
 
                 Company::upsert($rows, ['gravityzone_id'], ['name', 'last_seen_at', 'is_present', 'sync_error', 'updated_at']);
@@ -67,7 +67,11 @@ class CompanySynchronizer
                     // Licensing allows five requests/second; stay below that limit without retries.
                     Sleep::for(250)->milliseconds();
                     $license = $client->getLicenseInfo($settings, $company->gravityzone_id);
-                    $company->forceFill($license + ['license_synced_at' => now(), 'sync_error' => null])->save();
+                    $company->forceFill($license + ['license_synced_at' => now()])->save();
+
+                    Sleep::for(250)->milliseconds();
+                    $details = $client->getCompanyDetails($settings, $company->gravityzone_id);
+                    $company->forceFill($details + ['sync_error' => null])->save();
                 } catch (GravityZoneException $exception) {
                     $failures++;
                     $firstError ??= $exception->getMessage();
@@ -80,7 +84,7 @@ class CompanySynchronizer
             }
 
             if ($failures > 0) {
-                throw new GravityZoneException("Elenco aziende aggiornato. Aziende con licenza non aggiornata: {$failures}. {$firstError}");
+                throw new GravityZoneException("Elenco aziende aggiornato. Aziende con dati tecnici non aggiornati: {$failures}. {$firstError}");
             }
 
             $settings->forceFill(['companies_sync_error' => null])->save();

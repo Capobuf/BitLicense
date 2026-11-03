@@ -78,7 +78,7 @@ class GravityZoneSettingsTest extends TestCase
     {
         foreach ([['role' => 'operator'], ['role' => 'admin', 'is_active' => false]] as $state) {
             $this->actingAs(User::factory()->create($state));
-            $this->get('/admin/gravityzone')->assertForbidden();
+            $this->get('/admin/impostazioni/gravityzone')->assertForbidden();
             Livewire::test(GravityZoneSettings::class)->assertForbidden();
         }
 

@@ -29,7 +29,7 @@ class UserManagementTest extends TestCase
     public function test_an_administrator_creates_an_operator_without_sending_email(): void
     {
         $this->actingAs(User::factory()->administrator()->create());
-        $this->get('/admin/utenti')->assertOk();
+        $this->get('/admin/impostazioni/utenti')->assertOk();
 
         Livewire::test(ManageUsers::class)
             ->callAction('create', data: [
@@ -111,8 +111,8 @@ class UserManagementTest extends TestCase
     {
         $this->actingAs(User::factory()->create());
 
-        $this->get('/admin')->assertOk()->assertDontSee('href="http://localhost/admin/utenti"', false);
-        $this->get('/admin/utenti')->assertForbidden();
+        $this->get('/admin')->assertOk()->assertDontSee('href="http://localhost/admin/impostazioni/utenti"', false);
+        $this->get('/admin/impostazioni/utenti')->assertForbidden();
         Livewire::test(ManageUsers::class)->assertForbidden();
 
         $this->assertFalse(Gate::allows('create', User::class));

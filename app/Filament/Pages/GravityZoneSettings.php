@@ -2,6 +2,7 @@
 
 namespace App\Filament\Pages;
 
+use App\Filament\Clusters\Impostazioni;
 use App\Integrations\GravityZone\GravityZoneClient;
 use App\Integrations\GravityZone\GravityZoneException;
 use App\Models\GravityZoneSetting;
@@ -16,13 +17,18 @@ use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Contracts\Encryption\EncryptException;
 use Illuminate\Database\QueryException;
-use UnitEnum;
 
 class GravityZoneSettings extends Page
 {
-    protected static ?string $title = 'API';
+    protected static ?string $title = 'Impostazioni';
 
-    protected static string|UnitEnum|null $navigationGroup = 'Impostazioni';
+    protected static ?string $navigationLabel = 'API';
+
+    protected static ?string $breadcrumb = 'API';
+
+    protected static ?int $navigationSort = 1;
+
+    protected static ?string $cluster = Impostazioni::class;
 
     protected static ?string $slug = 'gravityzone';
 
