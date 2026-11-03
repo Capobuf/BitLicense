@@ -17,6 +17,7 @@ class Company extends Model
             'license_synced_at' => 'datetime',
             'last_seen_at' => 'datetime',
             'is_present' => 'boolean',
+            'is_suspended' => 'boolean',
         ];
     }
 }

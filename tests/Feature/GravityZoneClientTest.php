@@ -49,8 +49,8 @@ class GravityZoneClientTest extends TestCase
         );
         Http::assertSentCount(1);
 
-        $this->assertSame(['getCompaniesList', 'getLicenseInfo', 'getNetworkInventoryItems'], GravityZoneClient::READ_ONLY_METHODS);
-        $this->assertSame(['getCompaniesList', 'getLicenseInfo', 'getNetworkInventoryItems'], array_map(
+        $this->assertSame(['getCompaniesList', 'getCompanyDetails', 'getLicenseInfo', 'getNetworkInventoryItems'], GravityZoneClient::READ_ONLY_METHODS);
+        $this->assertSame(['getCompaniesList', 'getCompanyDetails', 'getLicenseInfo', 'getNetworkInventoryItems'], array_map(
             fn (ReflectionMethod $method): string => $method->getName(),
             (new ReflectionClass(GravityZoneClient::class))->getMethods(ReflectionMethod::IS_PUBLIC),
         ));
@@ -68,6 +68,48 @@ class GravityZoneClientTest extends TestCase
         $this->assertSame([], $client->getCompaniesList($this->settings()));
         $this->assertSame([['id' => 'company-1', 'name' => 'Azienda esempio']], $client->getCompaniesList($this->settings()));
         Http::assertSentCount(2);
+    }
+
+    public function test_company_details_read_only_the_documented_status_and_validate_the_company_identity(): void
+    {
+        // Projection of the official getCompanyDetails example, with an anonymized company ID.
+        Http::fakeSequence()
+            ->push(['id' => self::RPC_ID, 'jsonrpc' => '2.0', 'result' => ['id' => 'company-1', 'isSuspended' => false, 'address' => 'private-data']])
+            ->push(['id' => self::RPC_ID, 'jsonrpc' => '2.0', 'result' => ['id' => 'company-1', 'isSuspended' => true]])
+            ->push(['id' => self::RPC_ID, 'jsonrpc' => '2.0', 'result' => ['id' => 'company-1']])
+            ->push(['id' => self::RPC_ID, 'jsonrpc' => '2.0', 'result' => ['id' => 'company-1', 'isSuspended' => null]]);
+
+        $client = app(GravityZoneClient::class);
+        foreach ([false, true, null, null] as $status) {
+            $this->assertSame(['is_suspended' => $status], $client->getCompanyDetails($this->settings(), 'company-1'));
+        }
+        Http::assertSent(fn (Request $request): bool => $request->method() === 'POST' &&
+            $request->url() === self::API_URL.'/v1.0/jsonrpc/companies' &&
+            $request->hasHeader('Authorization', 'Basic '.base64_encode(self::TEST_KEY.':')) &&
+            $request->data() === ['jsonrpc' => '2.0', 'id' => self::RPC_ID, 'method' => 'getCompanyDetails', 'params' => ['companyId' => 'company-1']]
+        );
+        Http::assertSentCount(4);
+    }
+
+    #[DataProvider('invalidCompanyDetails')]
+    public function test_company_details_reject_malformed_status_and_foreign_companies(mixed $details): void
+    {
+        Http::fake(['*' => Http::response(['id' => self::RPC_ID, 'jsonrpc' => '2.0', 'result' => $details])]);
+
+        $this->expectException(GravityZoneException::class);
+        $this->expectExceptionMessage('stato aziendale valido');
+        app(GravityZoneClient::class)->getCompanyDetails($this->settings(), 'company-1');
+    }
+
+    public static function invalidCompanyDetails(): array
+    {
+        return [
+            'foreign company' => [['id' => 'company-2', 'isSuspended' => false]],
+            'missing ID' => [['isSuspended' => false]],
+            'string status' => [['id' => 'company-1', 'isSuspended' => 'false']],
+            'numeric status' => [['id' => 'company-1', 'isSuspended' => 0]],
+            'non-object' => [[]],
+        ];
     }
 
     #[DataProvider('invalidConfigurations')]

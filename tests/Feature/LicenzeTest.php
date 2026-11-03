@@ -14,6 +14,7 @@ use Filament\Actions\Testing\TestAction;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\Select;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
 use Livewire\Livewire;
@@ -40,13 +41,112 @@ class LicenzeTest extends TestCase
         $other = $this->computer($this->company());
         $page = Livewire::test(Licenze::class)->assertCountTableRecords(0)->assertActionDisabled('create');
         $page->set('data.company_id', $company->id)->assertCanSeeTableRecords([$pc])->assertCanNotSeeTableRecords([$other])
-            ->assertSee('31/12/2026')->assertSee('01/05/2027')->assertSee('Scadenza tecnica')->assertSee('Scadenza commerciale');
+            ->assertSee('31/12/2026')->assertSee('01/05/2027')->assertSee('Scadenza tecnica')->assertSee('Validità')->assertSee('Prezzo');
         $this->get('/admin')->assertOk()->assertSee('Licenze')->assertDontSee('Coperture commerciali')->assertDontSee('Panoramica');
         foreach (['aziende', 'endpoint', 'postazioni', 'coperture'] as $path) {
             $this->get('/admin/'.$path)->assertNotFound();
         }
         Http::assertNothingSent();
         Mail::assertNothingSent();
+    }
+
+    public function test_company_kpis_cover_all_local_computers_independently_of_search_and_filters(): void
+    {
+        $company = $this->company();
+        foreach ([
+            [],
+            ['expires_on' => '2026-11-02'],
+            ['activated_on' => '2026-01-01', 'expires_on' => '2026-11-02'],
+            ['activated_on' => '2026-01-01', 'expires_on' => '2026-11-03'],
+            ['activated_on' => '2026-01-01', 'expires_on' => '2026-12-03'],
+            ['activated_on' => '2026-01-01', 'expires_on' => '2026-12-04'],
+            ['activated_on' => '2026-12-01', 'expires_on' => '2027-12-01'],
+            ['activated_on' => '2026-01-01', 'expires_on' => '2026-11-01', 'is_present' => false],
+        ] as $attributes) {
+            $this->computer($company, $attributes);
+        }
+        $other = $this->company();
+        $this->computer($other);
+        $expected = ['Computer' => 8, 'Da completare' => 2, 'Scadute' => 2, 'In scadenza' => 2];
+        $page = Livewire::test(Licenze::class)->set('data.company_id', $company->id);
+        $this->assertSame($expected, $page->instance()->getTable()->getHeader()->getData()['metrics']);
+        $page->filterTable('status', 'expired')->assertCountTableRecords(2);
+        $this->assertSame($expected, $page->instance()->getTable()->getHeader()->getData()['metrics']);
+        $page->searchTable('Nessun computer con questo nome')->assertCountTableRecords(0);
+        $this->assertSame($expected, $page->instance()->getTable()->getHeader()->getData()['metrics']);
+        $page->set('data.company_id', $other->id);
+        $this->assertSame(['Computer' => 1, 'Da completare' => 1, 'Scadute' => 0, 'In scadenza' => 0], $page->instance()->getTable()->getHeader()->getData()['metrics']);
+        $page->set('data.company_id', $this->company()->id);
+        $this->assertSame(['Computer' => 0, 'Da completare' => 0, 'Scadute' => 0, 'In scadenza' => 0], $page->instance()->getTable()->getHeader()->getData()['metrics']);
+        Http::assertNothingSent();
+    }
+
+    public function test_company_options_show_escaped_names_remote_status_and_technical_expiry_without_api_calls(): void
+    {
+        $company = $this->company();
+        $company->forceFill(['name' => 'D’Amìco & Figli <img src=x onerror=alert(1)>', 'is_suspended' => false])->save();
+        $suspended = $this->company();
+        $suspended->forceFill(['is_suspended' => true, 'technical_expires_on' => null])->save();
+        $unknown = $this->company();
+        $this->computer($company, ['expires_on' => '2030-01-01']);
+
+        Livewire::test(Licenze::class)->assertFormFieldExists('company_id', function (Select $field) use ($company, $suspended, $unknown): bool {
+            $options = $field->getOptions();
+            $this->assertTrue($field->isHtmlAllowed());
+            $this->assertStringContainsString('Tutte le Aziende', $options['all']);
+            $this->assertStringContainsString('<svg', $options['all']);
+            $this->assertStringContainsString('<svg', $options[$company->id]);
+            $this->assertStringContainsString(e($company->name), $options[$company->id]);
+            $this->assertStringNotContainsString($company->name, $options[$company->id]);
+            $this->assertStringContainsString('Attiva', $options[$company->id]);
+            $this->assertStringContainsString('31/12/2026', $options[$company->id]);
+            $this->assertStringNotContainsString('01/01/2030', $options[$company->id]);
+            $this->assertStringContainsString('Sospesa', $options[$suspended->id]);
+            $this->assertStringContainsString('Scadenza tecnica: Non disponibile', $options[$suspended->id]);
+            $this->assertStringContainsString('Stato non disponibile', $options[$unknown->id]);
+            $this->assertSame([$company->id], array_keys($field->getSearchResults('d’amico & figli')));
+            $this->assertSame(['all'], array_keys($field->getSearchResults('tutte le aziende')));
+
+            return true;
+        });
+        $company->forceFill(['sync_error' => 'Aggiornamento non riuscito'])->save();
+        $this->assertStringContainsString('ultimo stato rilevato', view('filament.company-option', ['company' => $company])->render());
+        Http::assertNothingSent();
+    }
+
+    public function test_validity_stacks_dates_and_sorts_by_commercial_expiry(): void
+    {
+        $company = $this->company();
+        $late = $this->computer($company, ['activated_on' => '2026-05-01', 'expires_on' => '2028-05-01']);
+        $early = $this->computer($company, ['activated_on' => '2026-04-20', 'expires_on' => '2027-04-20']);
+        $page = Livewire::test(Licenze::class)->set('data.company_id', $company->id)
+            ->assertSee('Validità')->assertSee('Prezzo')->assertDontSee('Scadenza commerciale')
+            ->sortTable('validity')->assertCanSeeTableRecords([$early, $late], inOrder: true);
+        $html = $page->instance()->getTable()->getColumn('validity')->record($early)->toHtml();
+        $this->assertLessThan(strpos($html, '20/04/2027'), strpos($html, '20/04/2026'));
+        $page->mountAction(TestAction::make('edit')->table($early))->assertActionMounted(TestAction::make('edit')->table($early));
+        $this->assertStringNotContainsString('bl-computer-editor', $page->html());
+        Http::assertNothingSent();
+    }
+
+    public function test_reference_columns_follow_all_company_rows_and_update_after_modal_saves(): void
+    {
+        $company = $this->company();
+        $empty = $this->computer($company, ['quote_reference' => '   ', 'invoice_reference' => '']);
+        $this->computer($this->company(), ['quote_reference' => 'PR-ESTERNO', 'invoice_reference' => 'FT-ESTERNA']);
+        $page = Livewire::test(Licenze::class)->set('data.company_id', $company->id)
+            ->assertTableColumnHidden('quote_reference')->assertTableColumnHidden('invoice_reference');
+        $page->callAction(TestAction::make('edit')->table($empty), data: ['quote_reference' => 'PR-1'])
+            ->assertHasNoFormErrors()->assertTableColumnVisible('quote_reference')->assertTableColumnHidden('invoice_reference');
+        $page->callAction(TestAction::make('edit')->table($empty), data: ['invoice_reference' => 'FT-1'])
+            ->assertHasNoFormErrors()->assertTableColumnVisible('quote_reference')->assertTableColumnVisible('invoice_reference');
+        $page->searchTable('Nessuna corrispondenza')->assertCountTableRecords(0)
+            ->assertTableColumnVisible('quote_reference')->assertTableColumnVisible('invoice_reference');
+        $page->searchTable('')->callAction(TestAction::make('edit')->table($empty), data: ['quote_reference' => '', 'invoice_reference' => ''])
+            ->assertHasNoFormErrors()->assertTableColumnHidden('quote_reference')->assertTableColumnHidden('invoice_reference');
+        $page->set('data.company_id', $this->company()->id)
+            ->assertTableColumnHidden('quote_reference')->assertTableColumnHidden('invoice_reference');
+        Http::assertNothingSent();
     }
 
     public function test_click_edit_completes_an_imported_pc_without_optional_fields_or_changing_remote_values(): void
@@ -116,7 +216,42 @@ class LicenzeTest extends TestCase
         $page = Livewire::test(Licenze::class)->set('data.company_id', $company->id)->mountAction('create');
         $this->assertStringContainsString('Endpoint Security · MSP Secure', $page->instance()->mountedActionSchema0->toHtml());
         $other->forceFill(['technical_product' => null])->save();
-        Livewire::test(Licenze::class)->set('data.company_id', $company->id)->assertSee('Non fornito dall’API');
+        $page = Livewire::test(Licenze::class)->set('data.company_id', $company->id)
+            ->mountAction(TestAction::make('edit')->table($moved));
+        $this->assertStringContainsString('Non fornito dall’API', $page->instance()->mountedActionSchema0->toHtml());
+        Http::assertNothingSent();
+    }
+
+    public function test_edit_header_uses_the_detected_company_and_keeps_technical_details_compact(): void
+    {
+        $company = $this->company();
+        $remote = $this->company();
+        $remote->forceFill(['name' => 'Azienda <b>rilevata</b>'])->save();
+        $pc = $this->computer($company, [
+            'gravityzone_id' => 'remote-private-identifier', 'gravityzone_company_id' => $remote->id,
+            'technical_name' => 'PC-GZ', 'platform' => 'Windows 11 Pro', 'last_seen_at' => '2026-11-03 17:18:00',
+        ]);
+        $page = Livewire::test(Licenze::class)->set('data.company_id', $company->id)
+            ->mountAction(TestAction::make('edit')->table($pc));
+        $modal = Blade::render('<x-filament::modal :heading="$heading" />', ['heading' => $page->instance()->getMountedActions()[0]->getModalHeading()]);
+        $this->assertStringContainsString('aria-label="Ultimo Rilevamento: 03/11/2026 17:18"', $modal);
+        $header = $page->instance()->getMountedActions()[0]->getModalHeading()->toHtml();
+        $this->assertStringContainsString(e($remote->name), $header);
+        $this->assertStringNotContainsString($remote->name, $header);
+        $this->assertStringContainsString('Ultimo Rilevamento: 03/11/2026 17:18', $header);
+        $html = $page->instance()->mountedActionSchema0->toHtml();
+        $this->assertStringContainsString('Windows 11 Pro', $html);
+        $this->assertStringNotContainsString('remote-private-identifier', $html);
+        $this->assertStringNotContainsString('Dettagli GravityZone', $html);
+
+        $manual = $this->computer($company);
+        $page = Livewire::test(Licenze::class)->set('data.company_id', $company->id)
+            ->mountAction(TestAction::make('edit')->table($manual));
+        $header = $page->instance()->getMountedActions()[0]->getModalHeading()->toHtml();
+        $this->assertStringContainsString($company->name, $header);
+        $this->assertStringNotContainsString('Ultimo Rilevamento', $header);
+        $pc->forceFill(['last_seen_at' => null])->save();
+        $this->assertStringContainsString('Ultimo Rilevamento: Non disponibile', view('filament.computer-heading', ['computer' => $pc])->render());
         Http::assertNothingSent();
     }
 

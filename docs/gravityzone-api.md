@@ -1,8 +1,8 @@
 # Contratto GravityZone verificato
 
-Verifica documentale: 3 novembre 2026. Il client espone soltanto tre letture
-esplicite: `getCompaniesList`, `getNetworkInventoryItems` (Network) e
-`getLicenseInfo` (Licensing).
+Verifica documentale: 3 novembre 2026. Il client espone soltanto quattro letture
+esplicite: `getCompaniesList`, `getNetworkInventoryItems` (Network),
+`getLicenseInfo` (Licensing) e `getCompanyDetails` (Companies).
 Non contiene un invocatore RPC generico o metodi che modificano GravityZone.
 
 La base configurata termina in `/api`. Le richieste POST usano JSON-RPC 2.0,
@@ -20,6 +20,25 @@ oltre 255 caratteri o record incompleti invalidano l’intero elenco prima
 del salvataggio. Nessuna paginazione è documentata per questo metodo;
 non vengono aggiunti parametri presunti.
 Fonte: [getCompaniesList](https://www.bitdefender.com/business/support/en/77211-128478-getcompanieslist.html).
+
+`getCompanyDetails` usa `/v1.0/jsonrpc/companies` con `companyId` esplicito.
+Si controlla che l’oggetto restituito abbia lo stesso ID richiesto e si conserva
+solo `isSuspended`: `true` significa **Sospesa**, `false` **Attiva**. Campo
+assente/nullo significa **Stato non disponibile**; stringhe/numeri non sono
+convertiti implicitamente. Presenza nell’inventario e scadenza della licenza
+non determinano lo stato dell’account. Altri dettagli, contatti e indirizzi
+remoti non vengono salvati.
+
+La sincronizzazione legge lo stato dopo la licenza, con pausa di 250 ms.
+Se questa lettura fallisce, conserva la licenza appena acquisita e lo stato
+precedente, segnala l’aggiornamento incompleto e mostra quest’ultimo come
+**ultimo stato rilevato**. Come per gli altri errori di sincronizzazione, il
+pannello segnala il fallimento prima di avviare l’import dei computer.
+La chiave deve consentire la lettura nel servizio Companies. Nessuna lettura
+avviene all’apertura del selettore. La nuova chiamata non è ancora stata
+eseguita contro GravityZone reale; i casi simulati sono proiezioni anonime
+dei campi documentati, non payload cliente.
+Fonte: [getCompanyDetails](https://www.bitdefender.com/business/support/en/77211-126239-getcompanydetails.html).
 
 ## Licenza tecnica aziendale
 

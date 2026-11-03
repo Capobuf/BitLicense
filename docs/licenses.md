@@ -4,6 +4,23 @@ La vista `/admin` segue un unico percorso: scegli l’azienda, clicchi il comput
 modifichi e salvi. Nel riepilogo della tabella compare la licenza tecnica
 aziendale GravityZone, in sola lettura; le righe riportano le date commerciali
 locali dei singoli PC. I due tipi di scadenza sono indipendenti.
+La matita o il clic sulla riga apre la modale. Non ci sono freccette o
+sotto-righe di modifica. **Salva** conferma, **Annulla** chiude senza salvare.
+
+Nel selettore, **Tutte le Aziende** mostra le aziende in ordine alfabetico,
+ciascuna con una tabella e un riepilogo separati, anche quando non ha computer.
+Ricerca, filtri, colonne, riferimenti visibili e paginazione restano propri di
+ogni tabella. **Aggiungi PC manuale** nel riepilogo opera sull’azienda di quella
+tabella. Scegliendo una singola azienda si torna alla vista precedente.
+Le stesse modali e gli stessi vincoli commerciali sono riutilizzati nelle
+due viste, senza chiamare GravityZone durante il caricamento.
+
+Ogni opzione azienda ha un’icona e mostra **Nome — Stato — Scadenza tecnica**.
+Attiva/Sospesa proviene esclusivamente da `isSuspended` di GravityZone; finché
+non acquisito compare **Stato non disponibile**. Un aggiornamento fallito o
+un’azienda non più rilevata lascia visibile l’ultimo stato conosciuto, indicato
+come tale. La data è quella tecnica aziendale, mai quella commerciale dei PC.
+Nomi remoti escapati anche nelle etichette HTML del selettore.
 
 ## Record e campi modificabili
 
@@ -16,13 +33,13 @@ riferimenti fattura/preventivo e note, tutti
 facoltativi. Un PC manuale richiede il nome e usa l’azienda selezionata.
 Il nome tecnico GravityZone è in sola lettura. **Prodotto aziendale** viene
 letto dalla licenza aziendale GravityZone e mostrato in sola lettura nella
-tabella e nella modale; per un PC manuale usa l’azienda selezionata, per uno
-importato l’azienda rilevata, anche se diversa da quella locale. Se il campo
+tabella e nella modale; per un PC manuale usa l’azienda
+selezionata, per uno importato l’azienda rilevata, anche se diversa da quella locale. Se il campo
 non è restituito, compare **Non fornito dall’API**. Non si deducono il prodotto
 commerciale del singolo PC o le sue date dai moduli tecnici.
 Eventuali prodotti commerciali annotati prima di questa modifica rimangono
-visibili come **Prodotto commerciale salvato** nella modale e conservati negli
-snapshot e nei trasferimenti; non sono sostituiti dal prodotto aziendale.
+visibili come **Prodotto Commerciale Salvato** nella modale,
+conservati negli snapshot e nei trasferimenti; non sono sostituiti dal prodotto aziendale.
 Il campo **Descrizione commerciale** è stato rimosso dalla creazione e modifica
 su richiesta del committente. I valori già salvati non vengono cancellati:
 restano conservati nei dati commerciali e negli snapshot automatici.
@@ -41,7 +58,7 @@ la scadenza deve essere uguale o successiva all’attivazione; date inesistenti
 sono rifiutate. Un periodo di un giorno è valido. La scadenza è l’ultimo giorno
 incluso: il 20/04/2027 un PC con quella scadenza è ancora coperto.
 
-Se l’operatore cambia l’attivazione e la scadenza è vuota, la modale suggerisce
+Se l’operatore cambia l’attivazione e la scadenza è vuota, il modulo suggerisce
 un anno dopo senza sovrascrivere una scadenza già scelta. Da 29/02/2028 propone
 28/02/2029. Il suggerimento resta modificabile; non esistono periodi aggiuntivi
 da creare, rinnovi automatici o calcoli pro-rata.
@@ -62,6 +79,21 @@ Il prezzo può essere vuoto o zero. Accetta punto o virgola decimale, fino a
 due decimali e nove cifre intere, senza separatori delle migliaia. Importi
 negativi, notazione esponenziale o precisione aggiuntiva sono rifiutati senza
 arrotondamento implicito. Il salvataggio usa centesimi interi, non float.
+
+La colonna **Validità** riunisce l’attivazione sopra e la scadenza sotto;
+l’ordinamento usa la scadenza commerciale. Lo stato è sotto il nome del PC,
+insieme all’origine del dato. Il prezzo resta visibile, anche quando vuoto.
+**Rif. Preventivo** e **Rif. Fattura** compaiono indipendentemente solo se
+almeno un computer dell’azienda ha il rispettivo riferimento non vuoto.
+La presenza dei riferimenti considera tutta l’azienda, senza dipendere da
+ricerca, filtri o pagina corrente, e si aggiorna dopo il salvataggio.
+
+La ricerca parte da sinistra; filtri e gestore colonne hanno soltanto icone
+con etichette accessibili. Il gestore consente il riordino tramite trascinamento
+e la selezione delle informazioni aggiuntive: prodotto aziendale, note,
+sistema operativo, azienda rilevata e ultimo rilevamento. Prezzo e riferimenti
+seguono le regole automatiche sopra. Le preferenze restano nella sessione;
+**Reimposta** ripristina la selezione iniziale.
 
 ## Sostituzione del computer
 
@@ -104,12 +136,12 @@ La prima compilazione da valori commerciali vuoti non produce uno snapshot
 vuoto; cambiare soltanto nome o note non aggiunge storico commerciale.
 Per i passaggi sono conservati anche ID e nome del computer correlato al momento
 dell’azione. Lo storico, compresa la descrizione commerciale precedente,
-è consultabile nella stessa modale, senza un registro
+è consultabile nella modale, senza un registro
 operativo o nuove entità da gestire.
 
 `commercial_version` cambia quando mutano i dati locali. La pagina conserva
-la versione ricevuta all’apertura della modale e il modello la controlla sotto
-lock prima del salvataggio: se un altro intervento ha cambiato il record,
+la versione ricevuta all’apertura della modale; il modello la
+controlla sotto lock prima del salvataggio: se un altro intervento ha cambiato il record,
 richiede di riaprire il computer. Una sincronizzazione dei soli dati tecnici
 non cambia la versione commerciale e non aggiunge snapshot.
 

@@ -155,3 +155,182 @@ Il lavoro è verificato localmente e attende la revisione del committente:
 push/apertura PR richiedono approvazione esplicita, il merge un’approvazione
 separata. La #17 resta aperta fino all’integrazione approvata e alla successiva
 pulizia del branch. Il collaudo non riattiva le #10–#15.
+
+## Rifinitura dopo il merge — 03/11/2026
+
+Su richiesta del committente, le modali di modifica e creazione manuale sono
+divise in **Computer**, **Licenza Commerciale** e **Riferimenti e Note**, con
+icone native. Preventivo e fattura sono affiancati su desktop e impilati su
+mobile. Nome tecnico più evidente, etichetta nascosta, sistema operativo sotto
+l’hostname; prodotto indicato come **Licenza**, date **Attivazione** e **Scadenza**
+con esempi nei campi vuoti, importo **Prezzo**. Rimossi l’aiuto sotto la scadenza
+e i dettagli con ID GravityZone. L’intestazione della modale mostra l’azienda
+rilevata per gli importati, quella locale per i manuali e una icona informativa
+con tooltip sull’ultimo rilevamento, utilizzabile con mouse, tastiera e tocco.
+
+Il riepilogo della stessa tabella presenta licenza aziendale, tipo e scadenza
+tecnica, senza ripetere il nome già nel selettore. I quattro KPI contano tutti
+i computer locali, dati da completare, scadute e in scadenza entro 30 giorni,
+riutilizzando lo stato esistente, indipendentemente da ricerca/filtri/pagine.
+Restano visibili errori e assenza di dati API; l’ultimo aggiornamento aziendale
+è nel tooltip dell’icona informativa.
+
+Il committente ha chiesto esplicitamente di eliminare freccetta e sotto-riga:
+la modifica resta nella modale aperta dalla matita o dal clic sulla riga.
+La tabella usa interamente il componente nativo Filament. **Validità** riunisce
+attivazione sopra e scadenza commerciale sotto, con ordinamento per scadenza.
+**Prezzo** resta visibile, anche vuoto o zero. **Rif. Preventivo** e **Rif. Fattura**
+compaiono separatamente solo se almeno un computer dell’azienda ha il relativo
+valore non vuoto. Una sola query aggregata per richiesta considera tutta
+l’azienda; ricerca, filtri e pagina corrente non cambiano questa regola.
+Salvataggio e cambio azienda aggiornano la visibilità. Lo stato è sotto il nome.
+
+La ricerca parte da sinistra. Filtri e colonne hanno solo icone con etichette
+accessibili e tooltip. Il gestore mantiene riordino tramite trascinamento,
+preferenze in sessione e ripristino; prodotto, note e dettagli tecnici restano
+selezionabili. Prezzo e riferimenti seguono le regole automatiche sopra.
+Completate le traduzioni dei comandi e degli annunci accessibili del riordino.
+Solo CSS statico e componenti installati, senza dipendenze o build frontend.
+
+- Suite completa con il comando SQLite isolato riportato sopra: **213 test,
+  1.333 asserzioni**, tutti superati. `LicenzeTest`: 19 test, 274 asserzioni.
+  Nuovi controlli per intestazione con azienda rilevata distinta dalla locale,
+  nomi escapati, tooltip, timestamp assente, PC manuali, KPI ai confini delle
+  date e indipendenti da ricerca/filtri, date impilate e ordinate per scadenza,
+  riferimenti assenti/vuoti/solo spazi, aziende diverse e comparsa/scomparsa
+  immediata dopo il salvataggio. Rimangono i test di validazione, storico,
+  permessi, sostituzione, riconciliazione e versioni obsolete della modale.
+- Chromium desktop 1440×1100 e mobile touch 390×844, su MySQL locale:
+  date impilate, prezzo zero e 79,90 €, riferimenti aggiunti/rimossi dalla
+  modale, visibilità indipendente dalla ricerca, cambio azienda, matita e
+  assenza di espansioni. Ricerca allineata a sinistra, comandi a icona,
+  trascinamento reale e ripristino colonne. Salvataggio dalla modale mobile;
+  nessun errore JavaScript o overflow orizzontale.
+- Scansione axe-core WCAG 2 A/AA della tabella desktop: nessuna violazione
+  rilevata; non sostituisce una verifica manuale con screen reader.
+- `vendor/bin/pint --test` e `git diff --check`: superati.
+- Anteprime in chat: `licenze-compatte/desktop.png`, `mobile.png` e
+  `senza-riferimenti.png`. Fixture dimostrative locali; nessuna chiamata API.
+  Fixture rimosse dopo le prove, con impronte SHA-256 dei dati originali invariate.
+
+Rifinitura locale sul branch `issue/17-collaudo-licenze`, ricreato da `main`
+dopo il merge precedente. Modifiche in attesa di revisione; nessun push o merge.
+Questi richiedono le approvazioni separate previste da `AGENTS.md`.
+
+### Scadenza tecnica nella griglia KPI
+
+Su ulteriore richiesta del committente, la scadenza tecnica è il quinto riquadro
+della stessa griglia dei quattro contatori, con data più evidente. Su mobile
+occupa una riga intera; restano l'etichetta distinta e gli avvisi di scadenza.
+Verifiche: `LicenzeTest` con il comando SQLite isolato sopra, 19 test e 274
+asserzioni superati. Chromium desktop/mobile: quinto riquadro allineato ai
+contatori, adattamento mobile, valore assente e nessun overflow o errore JS.
+Anteprime: `licenze-kpi-scadenza/desktop.png` e `mobile.png`. Nessuna API live.
+
+
+### Impostazioni con schede API e Utenti
+
+Un'unica voce **Impostazioni** apre `/admin/impostazioni`, che porta alla
+scheda API. API e Utenti usano le schede native Filament, con intestazione
+comune e selettore compatto su mobile; non sono più voci separate nella sidebar.
+Riutilizzati la pagina di configurazione e il resource utenti, senza duplicare
+form, tabella, gestione credenziali o autorizzazioni. Nuovi URL:
+`/admin/impostazioni/gravityzone` e `/admin/impostazioni/utenti`.
+
+Prima della richiesta di accorpare le verifiche sono passati i 26 test mirati
+(224 asserzioni) e la suite completa di 215 test (1.356 asserzioni), oltre a
+Pint e controllo diff. La prova desktop ha verificato navigazione, schede,
+chiave vuota e apertura/annullamento della creazione utente senza salvataggi.
+La prova mobile resta da completare nella verifica finale: il menu nativo
+espone le destinazioni con ruolo accessibile `menuitem`, non `link`.
+Le fixture sono state rimosse e le impronte dei dati originali sono invariate.
+Nessuna chiamata API o modifica alla configurazione salvata.
+
+Su istruzione del committente, da questo punto le verifiche vengono raccolte
+per la fine della sequenza di modifiche, senza riesecuzioni a ogni passaggio.
+Nessun push o merge eseguito.
+
+
+### Tutte le Aziende — modifiche in attesa della verifica finale
+
+Aggiunta la voce **Tutte le Aziende** al selettore. La pagina mostra una
+tabella nativa distinta per ogni azienda, in ordine alfabetico, con nome,
+licenza, KPI e creazione manuale contestuale. Le tabelle riutilizzano la stessa
+implementazione di Licenze: nessuna duplicazione dei form o delle regole di
+salvataggio. Ogni istanza blocca il proprio ambito aziendale e usa un diverso
+identificatore di paginazione/query string. La sincronizzazione esplicita
+aggiorna anche le tabelle incorporate tramite l’evento nativo di refresh.
+
+Come richiesto dal committente, nessun test o controllo browser è stato
+rilanciato in questo passaggio. Alla verifica finale controllare: selezione
+completa/singola e ritorno; aziende vuote; dati e KPI separati; ricerca, filtri,
+colonne e pagine indipendenti; comparsa dei riferimenti per singola azienda;
+modifica, creazione, versioni obsolete, sostituzione e riconciliazione nelle
+tabelle incorporate; autorizzazioni e aggiornamento dopo la sincronizzazione
+simulata; resa desktop/mobile e assenza di nuove chiamate API al caricamento.
+Nessun push o merge.
+
+### Selettore azienda con icona, stato e scadenza — verifica differita
+
+Le opzioni mostrano icona, nome escapato, stato Attiva/Sospesa e scadenza
+tecnica. La ricerca considera il testo, non il markup HTML, mantenendo nomi
+con accenti e caratteri speciali. **Tutte le Aziende** ha una propria icona.
+Campo nuovo `companies.is_suspended` nullable, alimentato esclusivamente dalla
+lettura documentata `getCompanyDetails` nel servizio Companies. Nessuno stato
+è dedotto dalla scadenza o dalla presenza; errori mantengono l’ultimo dato
+con indicazione esplicita. Il client scarta gli altri dettagli remoti.
+
+Applicata solo la migration aggiuntiva dello stato dopo aver verificato
+ambiente `local`, database `bitlicense`, socket e datadir MySQL locali già
+autorizzati. Nessun reset e nessuna chiamata a GravityZone. La chiave salvata
+non è stata letta o modificata per questa attività; lo stato delle aziende
+esistenti resta sconosciuto fino a una sincronizzazione autorizzata.
+
+Preparati i casi automatici su campi mancanti/nulli, booleani, valori malformati,
+identità aziendale, passaggio attiva/sospesa, errore con conservazione della
+licenza appena letta e dei dati commerciali, nomi escapati e ricerca. Test,
+controlli statici e anteprime browser restano differiti alla fine della
+sequenza, come richiesto. Da verificare anche i permessi della chiave per
+Companies prima di dichiarare verificata la nuova lettura live.
+
+### Verifica finale della sequenza — 03/11/2026
+
+Dopo il riscontro «per me ok», completate insieme le verifiche differite.
+Corretto l’identificatore delle tabelle incorporate: l’API nativa `identifier`
+separa sia le preferenze in sessione sia i parametri di paginazione per azienda;
+il solo `queryStringIdentifier` non separava le preferenze. Un test verifica
+che 25 righe per pagina nella prima azienda e 50 nella seconda rimangano
+indipendenti anche montando nuovamente i componenti.
+
+- Suite completa SQLite isolata con il comando riportato sopra: **227 test,
+  1.452 asserzioni**, tutti superati. Inclusi stato aziendale API, valori
+  mancanti/malformati, identità, conservazione dei dati, selettore escapato,
+  ricerca con accenti/caratteri speciali, tabelle separate, creazione/modifica
+  contestuali, ambito aziendale bloccato, accessi disabilitati e sessioni.
+- `vendor/bin/pint --test` e `git diff --check`: superati dopo aver corretto
+  la sola formattazione di `Licenze.php`.
+- Chromium desktop 1440×1100 e smartphone touch 390×844: selettore con icona,
+  stato e scadenza tecnica; valore assente; date impilate, prezzo zero e 79,90 €;
+  comparsa/scomparsa dei riferimenti dopo salvataggio; ricerca a sinistra,
+  comandi a icona e riordino reale delle colonne. Verificati il quinto KPI
+  sulla stessa riga su desktop e a tutta larghezza su mobile.
+- **Tutte le Aziende**: ricerca, riferimenti e righe per pagina indipendenti;
+  creazione nella prima azienda, modifica dalla relativa matita, salvataggio
+  touch e ritorno alla vista singola. Aziende vuote e richieste verso record
+  di un’altra azienda sono coperte dai test automatici.
+- **Impostazioni**: unica voce, schede API/Utenti su desktop e selettore nativo
+  su mobile; campo chiave vuoto, apertura/annullamento creazione utente,
+  nessun salvataggio di configurazione o utente. Nessun errore JavaScript
+  o overflow orizzontale nei flussi verificati. Scansione axe-core WCAG 2 A/AA
+  della tabella desktop: nessuna violazione rilevata.
+- Anteprime e diff completo in `verifica-finale` negli allegati locali della
+  chat. Fixture temporanee rimosse; conteggi e SHA-256 delle righe originali
+  di aziende, computer, utenti e configurazione coincidono prima/dopo.
+
+Nessuna nuova chiamata reale a GravityZone, email o operazione in produzione.
+La nuova lettura `getCompanyDetails` è verificata con simulazioni documentali;
+permesso Companies della chiave e risposta reale restano da verificare con
+l’autorizzazione prevista. Safari, Firefox e dispositivi fisici non verificati.
+Branch `issue/17-collaudo-licenze`, nessun commit/push/PR di queste modifiche.
+Prima del push è richiesta la revisione del diff completo e l’approvazione
+esplicita prevista da AGENTS.md; il merge richiede approvazione separata.
