@@ -3,7 +3,7 @@
 namespace App\Integrations\GravityZone;
 
 use App\Models\Company;
-use App\Models\Endpoint;
+use App\Models\Computer;
 use App\Models\GravityZoneSetting;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Cache;
@@ -97,7 +97,8 @@ class EndpointSynchronizer
                     $rows = array_map(fn (array $item): array => [
                         'gravityzone_id' => $item['id'],
                         'company_id' => $company->id,
-                        'name' => $item['name'],
+                        'gravityzone_company_id' => $company->id,
+                        'technical_name' => $item['name'],
                         'platform' => $item['platform'],
                         'is_managed' => $item['is_managed'],
                         'is_isolated' => $item['is_isolated'],
@@ -106,12 +107,12 @@ class EndpointSynchronizer
                     ], $items);
 
                     foreach (array_chunk($rows, 500) as $chunk) {
-                        Endpoint::upsert($chunk, ['gravityzone_id'], [
-                            'company_id', 'name', 'platform', 'is_managed', 'is_isolated', 'is_present', 'last_seen_at', 'updated_at',
+                        Computer::upsert($chunk, ['gravityzone_id'], [
+                            'gravityzone_company_id', 'technical_name', 'platform', 'is_managed', 'is_isolated', 'is_present', 'last_seen_at', 'updated_at',
                         ]);
                     }
 
-                    Endpoint::query()->where('company_id', $company->id)->whereNotIn('gravityzone_id', $ids)->update(['is_present' => false]);
+                    Computer::query()->where('gravityzone_company_id', $company->id)->whereNotIn('gravityzone_id', $ids)->update(['is_present' => false]);
                     $company->forceFill(['endpoints_synced_at' => $seenAt, 'endpoints_sync_error' => null])->save();
                 });
                 $count += count($items);

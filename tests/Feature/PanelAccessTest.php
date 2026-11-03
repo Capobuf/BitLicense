@@ -32,7 +32,7 @@ class PanelAccessTest extends TestCase
             ->assertHasNoFormErrors();
 
         $this->assertAuthenticatedAs($user);
-        $this->get('/admin')->assertOk()->assertSee('Scadenzario e avvisi interni');
+        $this->get('/admin')->assertOk()->assertSee('Licenze');
         $this->post('/admin/logout')->assertRedirect('/admin/login');
         $this->assertGuest();
     }

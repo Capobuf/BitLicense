@@ -1,7 +1,13 @@
 # BitLicense
 
-Applicazione per seguire scadenze e rinnovi Bitdefender. La scadenza tecnica
-dell'azienda in GravityZone è distinta dalla copertura commerciale di ogni PC.
+Applicazione italiana per seguire le scadenze Bitdefender: scegli l’azienda,
+clicchi un computer, modifichi le date e salvi. La scadenza tecnica aziendale
+GravityZone resta distinta dalla scadenza commerciale locale di ogni PC.
+
+L’issue #26 sostituisce il precedente flusso a quattro entità con **Azienda +
+Computer** e una sola vista **Licenze**. Le issue #10–#15 e #17 sono sospese:
+il loro perimetro va riesaminato con il committente dopo la semplificazione.
+La #16 resta chiusa; nessun rilascio in produzione è previsto.
 
 ## Ambiente di sviluppo
 
@@ -73,126 +79,89 @@ Il collaudo reale richiede l'inserimento della chiave da parte del committente
 e il suo comando esplicito di ripresa. Fino ad allora sono usate soltanto fixture
 documentali, con i limiti descritti in [docs/gravityzone-api.md](docs/gravityzone-api.md).
 
-### Aziende e sincronizzazione
+### Licenze: un’unica vista operativa
 
-La voce **Aziende** (`/admin/aziende`) mostra aziende, scadenza tecnica della
-licenza principale e stato della lettura. Amministratori e operatori possono
-cercare le aziende e modificare contatti e note locali. Solo gli amministratori
-avviano **Sincronizza aziende**, con conferma esplicita. Il caricamento della
-pagina non esegue chiamate API. Le scadenze mancanti sono indicate come non
-disponibili; i dati precedenti restano visibili con un avviso se la lettura fallisce.
-Le aziende assenti dal nuovo elenco vengono conservate con il relativo stato.
-Nessuna sincronizzazione crea coperture commerciali o invia email.
+Dopo il login si apre **Licenze** (`/admin`). Il selettore ricercabile permette
+di scegliere un’azienda; la stessa tabella mostra il riepilogo della sua licenza
+tecnica GravityZone e i computer con prodotto, attivazione, scadenza commerciale
+e stato. Il riepilogo tecnico resta separato dalle date locali delle righe PC.
 
-Lo stesso processo è disponibile da CLI:
+Un nuovo computer GravityZone compare automaticamente come **Da completare**.
+Cliccando la riga si apre una sola modale: il nome tecnico è in sola lettura;
+prodotto, date, descrizione, prezzo, riferimenti fattura/preventivo e note sono
+modificabili e facoltativi. **Salva** aggiorna direttamente quel computer.
+Non occorre creare postazioni, prodotti di catalogo o coperture separate.
+
+**Aggiungi PC manuale** opera nella stessa pagina e richiede soltanto il nome.
+L’azienda è quella selezionata. Il menu contestuale della riga consente di
+collegare esplicitamente un PC manuale a una rilevazione GravityZone e di
+trasferire una licenza pagata a un sostituto della stessa azienda. Nessuna di
+queste azioni modifica GravityZone. Lo storico essenziale si consulta nella
+modale del computer. Date, importi, vincoli e casi limite sono descritti in
+[docs/licenses.md](docs/licenses.md).
+
+Lo stato e i filtri distinguono **Da completare**, **Scaduta**, **In scadenza**
+entro 30 giorni, **Attiva** e **Da attivare**. La scadenza odierna è ancora
+valida. Il caricamento della pagina e i filtri leggono soltanto il database
+locale: non inviano email, non sincronizzano e non creano notifiche duplicate.
+Non esistono dashboard, scadenzari o archivi commerciali paralleli.
+
+### Sincronizzazione in sola lettura
+
+**Aggiorna da GravityZone**, riservato agli amministratori con conferma,
+legge prima aziende e licenze tecniche, poi l’inventario computer. Le chiavi
+richiedono i permessi di lettura Network e Licensing. Gli operatori possono
+modificare i dati locali ma non avviare questa lettura né accedere alle credenziali.
+
+Il sincronizzatore conserva date, prodotto, prezzo, riferimenti, note e storico
+locali. Riconosce i computer dall’ID GravityZone, mai dal nome. Rinomina, assenza
+e ricomparsa aggiornano i soli dati remoti. Un ID nuovo dopo reinstallazione
+rimane distinto fino a una scelta esplicita dell’operatore. Uno spostamento
+remoto di azienda conserva l’azienda locale e viene segnalato per verifica.
+I contatti aziendali già memorizzati restano protetti dalla sincronizzazione;
+questa issue non introduce un CRM o una nuova gestione contatti.
+
+Gli errori di lettura e gli stati disponibili sono mostrati nel riepilogo
+aziendale. I dati precedenti restano conservati; l’inventario non viene
+applicato parzialmente se una sua pagina fallisce. Lo stesso processo è
+accessibile con i comandi separati:
 
 ```sh
 php artisan bitlicense:sync-companies
+php artisan bitlicense:sync-endpoints
 php artisan schedule:list
 ```
 
-Il comando restituisce un codice di errore anche se il solo elenco è stato
-aggiornato e alcune licenze non sono state lette. Il riepilogo del pannello e
-il dettaglio azienda indicano il risultato. La chiave richiede i permessi di
-lettura Network e Licensing. Le esecuzioni contemporanee vengono rifiutate;
-un’interruzione anomala può lasciare il lock occupato per un massimo di un’ora.
+I comandi restituiscono un codice di errore se il rispettivo import non è
+completo. Un lock condiviso impedisce sovrapposizioni fra import aziende e
+computer; dopo un’interruzione anomala può restare occupato fino a un’ora.
+Le pianificazioni native restano alle 03:00 per le aziende e alle 04:00 per
+l’inventario, nel fuso Europe/Rome. Nessun Cron viene installato automaticamente.
 
-La pianificazione nativa è giornaliera alle 03:00 Europe/Rome. In sviluppo
-si può usare `php artisan schedule:work`; per un ambiente di sviluppo con Cron
-la voce standard esegue ogni minuto `php /percorso/BitLicense/artisan schedule:run`,
-come utente dell’applicazione. Nessun Cron è stato installato automaticamente.
-Le chiamate sono sincrone: per elenchi molto più grandi delle 16 aziende collaudate,
-preferire il comando CLI e verificare i limiti di durata PHP del proprio ambiente.
-Non sono necessari queue worker, servizi permanenti o dipendenze aggiuntive.
+Solo dopo l’autorizzazione ai collegamenti reali, in sviluppo si può usare
+`php artisan schedule:work`, oppure un Cron che esegua ogni minuto
+`php /percorso/BitLicense/artisan schedule:run` come utente dell’applicazione.
+Le letture sono sincrone: per inventari ampi preferire la CLI e verificare i
+limiti di durata PHP. Non servono queue worker, Redis o nuovi servizi.
+Contratto API, fixture e verifiche storiche sono descritti in
+[docs/gravityzone-api.md](docs/gravityzone-api.md).
 
-### Endpoint e postazioni locali
+### Aggiornamento dello schema locale per #26
 
-**Endpoint GravityZone** (`/admin/endpoint`) è l’elenco tecnico importato.
-**Sincronizza endpoint**, riservato agli amministratori, legge i computer,
-le macchine virtuali e le istanze EC2 delle aziende già importate, compresi
-i gruppi Active Directory. I nuovi endpoint restano **Da verificare**;
-non vengono create postazioni locali o coperture commerciali automaticamente.
+Il nuovo schema contiene una sola tabella `computers` al posto di endpoint,
+postazioni, coperture e assegnazioni. Le migration obsolete sono eliminate;
+non è previsto un percorso conservativo per il vecchio schema sacrificabile.
 
-Da **Postazioni** (`/admin/postazioni`) entrambi i ruoli possono creare una
-postazione manuale indicando azienda, nome locale e note. Dall’endpoint,
-**Associa postazione** richiede la scelta esplicita di una postazione libera
-della stessa azienda: gli ID locali distinguono anche i nomi uguali.
-**Crea postazione** consente invece una creazione esplicita già collegata.
-I nomi tecnici possono cambiare durante il sync; quelli locali restano invariati.
-Un nuovo ID dopo reinstallazione resta un endpoint distinto da verificare.
-
-Endpoint non più rilevati, postazioni e associazioni vengono conservati.
-Se GravityZone sposta un endpoint a un’altra azienda, la postazione mantiene
-l’azienda locale e viene segnalata l’associazione da verificare. Non sono
-previsti merge incerti, eliminazioni o riassegnazioni automatiche.
-Gli errori sono visibili globalmente e per azienda, anche senza endpoint.
-
-```sh
-php artisan bitlicense:sync-endpoints
-```
-
-Scheduler pianifica gli endpoint alle 04:00 Europe/Rome. Un lock condiviso
-impedisce sovrapposizioni con l’import aziende. Cron non è stato attivato.
-La paginazione e Active Directory sono descritti nel contratto API;
-la continuazione su più pagine è verificata con fixture documentali.
-
-### Coperture commerciali
-
-**Coperture commerciali** (`/admin/coperture`) consente a entrambi i ruoli
-attivi di registrare periodi e importi per una o più postazioni della stessa
-azienda. L’importo è applicato a ciascuna postazione; la creazione multipla
-è interamente annullata se una delle selezioni non è valida.
-
-La fine è l’ultimo giorno coperto, incluso. Non sono ammesse sovrapposizioni;
-le date non vengono ricavate da GravityZone. **Periodo e storico** mostra
-separatamente scadenza tecnica aziendale, copertura acquistata e assegnazioni.
-**Correggi copertura** aggiorna esplicitamente date, importo e riferimenti;
-**Trasferisci a un altro PC** conserva il periodo acquistato e registra
-il passaggio alla postazione sostitutiva. I periodi precedenti non vengono
-sostituiti automaticamente e le coperture non vengono eliminate dal pannello.
-
-Importi, estremi inclusivi, atomicità e storico sono documentati in
-[docs/commercial-coverages.md](docs/commercial-coverages.md).
-
-### Schede commerciali e prodotti
-
-La scheda **Aziende** conserva anche i prodotti/edizioni descritti localmente,
-con il prezzo annuale abituale specifico di quell’azienda. Gli add-on sono
-compresi nel prezzo totale. Il contratto API verificato per l’inventario non
-identifica l’edizione commerciale acquistata per ciascun endpoint: il prodotto
-viene quindi scelto o descritto manualmente, senza dedurlo dalla piattaforma
-tecnica o dal tipo di licenza aziendale.
-
-Nella scheda **Postazioni** si possono indicare prodotto aziendale, descrizione
-commerciale, data di installazione/attivazione e note anche senza endpoint
-GravityZone. I dati tecnici restano in sola lettura, separati dai periodi,
-dagli importi e dai riferimenti fattura/preventivo delle coperture.
-
-Se nella nuova copertura tutte le postazioni selezionate hanno lo stesso
-prodotto aziendale, viene proposto il suo prezzo annuale abituale. L’operatore
-controlla il periodo e può modificare l’importo per ogni nuova copertura;
-con prodotti diversi o non indicati deve inserirlo manualmente. Il suggerimento
-non calcola ancora un pro-rata e non cambia coperture già registrate.
-Cambiare il prezzo abituale o il prodotto di una postazione non riscrive
-gli importi o i riferimenti degli acquisti precedenti.
-
-### Scadenzario e avvisi interni
-
-**Panoramica** raccoglie gli avvisi correnti distinguendo licenze tecniche
-aziendali, coperture commerciali delle postazioni ed endpoint da verificare.
-I filtri permettono di scegliere azienda, tipo, stato e periodo. La scadenza
-odierna è ancora coperta; gli avvisi di prossima scadenza considerano i 30 giorni
-successivi. Le date mancanti restano segnalate separatamente, senza inventarle.
-
-I periodi commerciali contigui già acquistati vengono letti come un intervallo
-continuo: un vecchio periodo rinnovato non continua a comparire scaduto.
-Una copertura futura separata da un intervallo scoperto non nasconde il problema;
-la data indicata in quel caso è il prossimo inizio, spiegato nella riga.
-
-Gli avvisi sono calcolati dai dati locali e aggiornati con il caricamento della
-pagina o **Aggiorna avvisi**. Non vengono accodate copie di notifiche nel database,
-eseguite chiamate API o inviate email ai clienti. Non servono un nuovo Cron,
-polling o worker. L’elenco non crea proposte e non conferma rinnovi automaticamente.
+Il committente ha autorizzato l’eliminazione **senza backup del solo database
+locale di sviluppo**. Prima di azzerarlo verificare la connessione effettiva,
+il database e l’host/socket, inclusi eventuali `DB_URL` o configurazioni in cache.
+Se il database è remoto, di produzione o non identificabile, fermarsi e chiedere.
+Solo dopo tale verifica, `php artisan migrate:fresh` ricrea lo schema locale.
+L’operazione elimina anche utenti e impostazioni locali: ripetere il normale
+bootstrap amministratore e inserire la chiave dal pannello protetto. Non
+trasferire credenziali in chat, comandi o file versionati. Riprendere i test
+live soltanto dopo l’intervento e l’autorizzazione esplicita del committente.
+Questa autorizzazione non riguarda altri database, file o dati GravityZone.
 
 ### Controlli automatici
 
@@ -203,8 +172,10 @@ php artisan test
 vendor/bin/pint --test
 ```
 
-I test del pannello verificano autenticazione, rifiuto di credenziali errate,
-logout, ruoli, gestione utenti e rifiuto degli accessi disabilitati.
+I test coprono autenticazione, ruoli, gestione utenti e accessi disabilitati,
+il percorso Licenze e i suoi vincoli, date/importi facoltativi, storico,
+trasferimento, riconciliazione, salvataggi obsoleti e sync simulato.
+I test con fixture non costituiscono un nuovo collaudo live del refactor #26.
 Le migrazioni e la navigazione vanno verificate
 anche sul database MySQL/MariaDB di sviluppo; SQLite non sostituisce il collaudo
 del database destinato all'applicazione.

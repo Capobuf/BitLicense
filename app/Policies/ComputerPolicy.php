@@ -2,10 +2,10 @@
 
 namespace App\Policies;
 
+use App\Models\Computer;
 use App\Models\User;
-use App\Models\Workstation;
 
-class WorkstationPolicy
+class ComputerPolicy
 {
     public function viewAny(User $user): bool
     {
@@ -17,12 +17,12 @@ class WorkstationPolicy
         return $this->viewAny($user);
     }
 
-    public function update(User $user, Workstation $workstation): bool
+    public function update(User $user, Computer $computer): bool
     {
         return $this->viewAny($user);
     }
 
-    public function delete(User $user, Workstation $workstation): bool
+    public function delete(User $user, Computer $computer): bool
     {
         return false;
     }

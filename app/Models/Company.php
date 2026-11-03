@@ -4,16 +4,10 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 
 #[Fillable(['contact_name', 'contact_email', 'contact_phone', 'notes'])]
 class Company extends Model
 {
-    public function products(): HasMany
-    {
-        return $this->hasMany(CompanyProduct::class);
-    }
-
     protected function casts(): array
     {
         return [
