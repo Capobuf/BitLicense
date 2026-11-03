@@ -8,25 +8,28 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('endpoints', function (Blueprint $table) {
+        Schema::create('computers', function (Blueprint $table) {
             $table->id();
             $table->foreignId('company_id')->constrained()->restrictOnDelete();
-            $table->string('gravityzone_id')->unique();
-            $table->text('name');
+            $table->string('gravityzone_id')->nullable()->unique();
+            $table->foreignId('gravityzone_company_id')->nullable()->constrained('companies')->restrictOnDelete();
+            $table->text('technical_name')->nullable();
+            $table->string('name')->nullable();
             $table->text('platform')->nullable();
             $table->boolean('is_managed')->nullable();
             $table->boolean('is_isolated')->nullable();
             $table->boolean('is_present')->default(true);
-            $table->timestamp('last_seen_at');
-            $table->timestamps();
-        });
-
-        Schema::create('workstations', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('company_id')->constrained()->restrictOnDelete();
-            $table->foreignId('endpoint_id')->nullable()->unique()->constrained()->restrictOnDelete();
-            $table->string('name');
+            $table->timestamp('last_seen_at')->nullable();
+            $table->string('product')->nullable();
+            $table->date('activated_on')->nullable();
+            $table->date('expires_on')->nullable()->index();
+            $table->unsignedBigInteger('price_cents')->nullable();
+            $table->text('commercial_description')->nullable();
+            $table->string('invoice_reference')->nullable();
+            $table->string('quote_reference')->nullable();
             $table->text('notes')->nullable();
+            $table->json('history')->nullable();
+            $table->unsignedInteger('commercial_version')->default(0);
             $table->timestamps();
         });
 
@@ -46,7 +49,6 @@ return new class extends Migration
                 $table->dropColumn(['endpoints_sync_attempted_at', 'endpoints_synced_at', 'endpoints_sync_error']);
             });
         }
-        Schema::dropIfExists('workstations');
-        Schema::dropIfExists('endpoints');
+        Schema::dropIfExists('computers');
     }
 };

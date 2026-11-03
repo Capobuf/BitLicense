@@ -46,7 +46,7 @@ Schedule::command('bitlicense:sync-companies')->dailyAt('03:00')->timezone('Euro
 Artisan::command('bitlicense:sync-endpoints', function () {
     try {
         $count = app(EndpointSynchronizer::class)->sync();
-        $this->info("Import completato. Endpoint rilevati: {$count}. Nessuna copertura commerciale creata.");
+        $this->info("Import completato. Endpoint rilevati: {$count}. Date commerciali locali conservate.");
 
         return 0;
     } catch (GravityZoneException $exception) {
@@ -54,6 +54,6 @@ Artisan::command('bitlicense:sync-endpoints', function () {
 
         return 1;
     }
-})->purpose('Importa gli endpoint GravityZone preservando postazioni e associazioni locali');
+})->purpose('Importa i computer GravityZone preservando date e dati commerciali locali');
 
 Schedule::command('bitlicense:sync-endpoints')->dailyAt('04:00')->timezone('Europe/Rome');

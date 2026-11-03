@@ -6,9 +6,8 @@ use App\Integrations\GravityZone\EndpointSynchronizer;
 use App\Integrations\GravityZone\GravityZoneClient;
 use App\Integrations\GravityZone\GravityZoneException;
 use App\Models\Company;
-use App\Models\Endpoint;
+use App\Models\Computer;
 use App\Models\GravityZoneSetting;
-use App\Models\Workstation;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
@@ -29,73 +28,76 @@ class EndpointSynchronizationTest extends TestCase
         GravityZoneSetting::create(['id' => 1, 'api_url' => 'https://gravityzone.example.test/api', 'api_key' => 'fake-test-key']);
     }
 
-    public function test_repeated_import_renames_by_stable_id_without_creating_local_workstations_or_changing_their_data(): void
+    public function test_repeated_import_creates_computers_directly_and_preserves_commercial_data_on_rename(): void
     {
         $company = $this->company('company-1');
         $this->mockItems(['company-1' => [$this->item('endpoint-1')]]);
         $sync = app(EndpointSynchronizer::class);
         $this->assertSame(1, $sync->sync());
-        $endpoint = Endpoint::sole();
-        $this->assertNull($endpoint->workstation);
-        $this->assertDatabaseCount('workstations', 0);
-        $local = Workstation::create(['company_id' => $company->id, 'name' => 'Nome commerciale', 'notes' => 'Nota locale']);
-        $local->linkEndpoint($endpoint);
+        $computer = Computer::sole();
+        $this->assertNull($computer->activated_on);
+        $this->assertNull($computer->expires_on);
+        $this->assertNull($computer->product);
+        $computer->updateCommercial(['activated_on' => '2026-05-01', 'expires_on' => '2027-05-01', 'notes' => 'Nota locale', 'amount' => '90,50'], 0);
+        $before = $computer->only(['activated_on', 'expires_on', 'notes', 'price_cents', 'commercial_version', 'history']);
         $this->travel(1)->hours();
         $this->mockItems(['company-1' => [$this->item('endpoint-1', 'NOME-NUOVO')]]);
 
         $this->assertSame(1, $sync->sync());
-        $this->assertDatabaseCount('endpoints', 1);
-        $this->assertDatabaseCount('workstations', 1);
-        $this->assertSame('NOME-NUOVO', $endpoint->refresh()->name);
-        $this->assertTrue($endpoint->last_seen_at->equalTo(now()));
-        $this->assertSame('Nome commerciale', $local->refresh()->name);
-        $this->assertSame('Nota locale', $local->notes);
-        $this->assertSame($endpoint->id, $local->endpoint_id);
+        $this->assertDatabaseCount('computers', 1);
+        $this->assertSame('NOME-NUOVO', $computer->refresh()->technical_name);
+        $this->assertEquals($before, $computer->only(array_keys($before)));
+        $this->assertTrue($computer->last_seen_at->equalTo(now()));
         $this->assertNull($company->refresh()->endpoints_sync_error);
         $this->assertTrue($company->endpoints_synced_at->equalTo(now()));
     }
 
-    public function test_disappearance_reappearance_and_a_reinstalled_device_with_the_same_name_never_merge_local_records(): void
+    public function test_disappearance_reappearance_and_reinstallation_never_merge_computers_by_name(): void
     {
         $company = $this->company('company-1');
+        $manual = Computer::create(['company_id' => $company->id, 'name' => 'PC-ESEMPIO']);
         $sync = app(EndpointSynchronizer::class);
         $this->mockItems(['company-1' => [$this->item('old-endpoint')]]);
         $sync->sync();
-        $old = Endpoint::sole();
-        $local = Workstation::create(['company_id' => $company->id, 'name' => 'PC locale']);
-        $local->linkEndpoint($old);
+        $old = Computer::where('gravityzone_id', 'old-endpoint')->sole();
+        $old->updateCommercial(['expires_on' => '2027-05-01'], 0);
         $this->mockItems(['company-1' => [$this->item('new-endpoint')]]);
         $sync->sync();
-        $this->assertDatabaseCount('endpoints', 2);
+        $this->assertDatabaseCount('computers', 3);
         $this->assertFalse($old->refresh()->is_present);
-        $new = Endpoint::where('gravityzone_id', 'new-endpoint')->sole();
-        $this->assertNull($new->workstation);
-        $this->assertSame($old->id, $local->refresh()->endpoint_id);
+        $this->assertSame('2027-05-01', $old->expires_on->toDateString());
+        $this->assertNull(Computer::where('gravityzone_id', 'new-endpoint')->sole()->expires_on);
+        $this->assertNull($manual->refresh()->gravityzone_id);
+        $this->assertTrue($manual->is_present);
 
         $this->mockItems(['company-1' => [$this->item('new-endpoint'), $this->item('old-endpoint')]]);
         $sync->sync();
-        $this->assertDatabaseCount('endpoints', 2);
+        $this->assertDatabaseCount('computers', 3);
         $this->assertTrue($old->refresh()->is_present);
-        $this->assertSame($old->id, $local->refresh()->endpoint_id);
+        $this->assertSame('2027-05-01', $old->expires_on->toDateString());
     }
 
-    public function test_a_remote_company_move_preserves_the_original_local_company_and_association(): void
+    public function test_remote_company_moves_in_either_direction_preserve_original_local_company_and_commercial_data(): void
     {
         $first = $this->company('company-1');
         $second = $this->company('company-2');
         $this->mockItems(['company-1' => [$this->item('endpoint-1')], 'company-2' => []]);
         app(EndpointSynchronizer::class)->sync();
-        $endpoint = Endpoint::sole();
-        $local = Workstation::create(['company_id' => $first->id, 'name' => 'PC locale', 'notes' => 'Storico originale']);
-        $local->linkEndpoint($endpoint);
+        $computer = Computer::sole();
+        $computer->updateCommercial(['notes' => 'Storico originale', 'expires_on' => '2027-05-01'], 0);
         $this->mockItems(['company-1' => [], 'company-2' => [$this->item('endpoint-1')]]);
         app(EndpointSynchronizer::class)->sync();
 
-        $this->assertDatabaseCount('endpoints', 1);
-        $this->assertSame($second->id, $endpoint->refresh()->company_id);
-        $this->assertSame($first->id, $local->refresh()->company_id);
-        $this->assertSame($endpoint->id, $local->endpoint_id);
-        $this->assertSame('Storico originale', $local->notes);
+        $this->assertDatabaseCount('computers', 1);
+        $this->assertSame($second->id, $computer->refresh()->gravityzone_company_id);
+        $this->assertSame($first->id, $computer->company_id);
+        $this->assertSame('Storico originale', $computer->notes);
+        $this->assertSame('2027-05-01', $computer->expires_on->toDateString());
+        $this->assertTrue($computer->is_present);
+        $this->mockItems(['company-1' => [$this->item('endpoint-1')], 'company-2' => []]);
+        app(EndpointSynchronizer::class)->sync();
+        $this->assertSame($first->id, $computer->refresh()->gravityzone_company_id);
+        $this->assertTrue($computer->is_present);
     }
 
     public function test_a_failed_later_page_cannot_partially_import_or_mark_existing_records_absent(): void
@@ -103,7 +105,7 @@ class EndpointSynchronizationTest extends TestCase
         $company = $this->company('company-1');
         $this->mockItems(['company-1' => [$this->item('endpoint-1')]]);
         app(EndpointSynchronizer::class)->sync();
-        $before = Endpoint::sole()->toArray();
+        $before = Computer::sole()->toArray();
         $lastSuccess = $company->refresh()->endpoints_synced_at;
         $this->travel(1)->hours();
         $this->mock(GravityZoneClient::class, function (MockInterface $mock): void {
@@ -111,7 +113,7 @@ class EndpointSynchronizationTest extends TestCase
         });
 
         $this->artisan('bitlicense:sync-endpoints')->assertFailed();
-        $this->assertSame($before, Endpoint::sole()->toArray());
+        $this->assertSame($before, Computer::sole()->toArray());
         $this->assertTrue($company->refresh()->endpoints_synced_at->equalTo($lastSuccess));
         $this->assertSame('Risposta della pagina successiva non valida.', $company->endpoints_sync_error);
         $this->assertNotNull(GravityZoneSetting::find(1)->endpoints_sync_error);
@@ -123,13 +125,13 @@ class EndpointSynchronizationTest extends TestCase
         $second = $this->company('company-2');
         $this->mockItems(['company-1' => [], 'company-2' => [$this->item('endpoint-2')]]);
         app(EndpointSynchronizer::class)->sync();
-        $before = Endpoint::sole()->toArray();
+        $before = Computer::sole()->toArray();
         $this->mock(GravityZoneClient::class, function (MockInterface $mock): void {
             $mock->shouldReceive('getNetworkInventoryItems')->once()->withArgs(fn ($settings, $id) => $id === 'company-1')
                 ->andThrow(new GravityZoneException('Limite richieste. Riprova tra 90 secondi.', stopSynchronization: true));
         });
         $this->artisan('bitlicense:sync-endpoints')->assertFailed();
-        $this->assertSame($before, Endpoint::sole()->toArray());
+        $this->assertSame($before, Computer::sole()->toArray());
         $this->assertStringContainsString('90 secondi', $second->refresh()->endpoints_sync_error);
     }
 
@@ -139,18 +141,16 @@ class EndpointSynchronizationTest extends TestCase
         $second = $this->company('company-2');
         $this->mockItems(['company-1' => [], 'company-2' => [$this->item('same-id')]]);
         app(EndpointSynchronizer::class)->sync();
-        $endpoint = Endpoint::sole();
-        $local = Workstation::create(['company_id' => $second->id, 'name' => 'PC locale']);
-        $local->linkEndpoint($endpoint);
+        $endpoint = Computer::sole();
+        $endpoint->updateCommercial(['notes' => 'Nota da conservare'], 0);
         $before = $endpoint->toArray();
         $this->travel(1)->hours();
         $this->mockItems(['company-1' => [$this->item('same-id', 'Ambigua')], 'company-2' => [$this->item('same-id')]]);
 
         $this->artisan('bitlicense:sync-endpoints')->assertFailed();
-        $this->assertDatabaseCount('endpoints', 1);
+        $this->assertDatabaseCount('computers', 1);
         $this->assertSame($before, $endpoint->refresh()->toArray());
-        $this->assertSame($endpoint->id, $local->refresh()->endpoint_id);
-        $this->assertSame($second->id, $local->company_id);
+        $this->assertSame($second->id, $endpoint->company_id);
         $this->assertStringContainsString('aziende diverse', $first->refresh()->endpoints_sync_error);
         $this->assertStringContainsString('aziende diverse', $second->refresh()->endpoints_sync_error);
     }
@@ -160,13 +160,13 @@ class EndpointSynchronizationTest extends TestCase
         $company = $this->company('company-1');
         $this->mockItems(['company-1' => [$this->item('endpoint-1')]]);
         app(EndpointSynchronizer::class)->sync();
-        $before = Endpoint::sole()->toArray();
+        $before = Computer::sole()->toArray();
         $lastSuccess = $company->refresh()->endpoints_synced_at;
-        DB::unprepared("CREATE TRIGGER reject_endpoint BEFORE INSERT ON endpoints WHEN NEW.gravityzone_id = 'endpoint-2' BEGIN SELECT RAISE(ABORT, 'private-db-value'); END;");
+        DB::unprepared("CREATE TRIGGER reject_endpoint BEFORE INSERT ON computers WHEN NEW.gravityzone_id = 'endpoint-2' BEGIN SELECT RAISE(ABORT, 'private-db-value'); END;");
         $this->mockItems(['company-1' => [$this->item('endpoint-1', 'Non salvare'), $this->item('endpoint-2')]]);
         $this->artisan('bitlicense:sync-endpoints')->assertFailed();
-        $this->assertDatabaseCount('endpoints', 1);
-        $this->assertSame($before, Endpoint::sole()->toArray());
+        $this->assertDatabaseCount('computers', 1);
+        $this->assertSame($before, Computer::sole()->toArray());
         $this->assertTrue($company->refresh()->endpoints_synced_at->equalTo($lastSuccess));
         $error = GravityZoneSetting::find(1)->endpoints_sync_error;
         $this->assertStringContainsString('errore del database', $error);

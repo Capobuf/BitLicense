@@ -36,7 +36,7 @@ Il formato documentato è `YYYY-MM-DDTHH:mm:ss`, privo di fuso dichiarato;
 non viene convertito in UTC o Europe/Rome. Una data non valida provoca un
 errore e conserva il precedente dato noto, segnalato come non aggiornato.
 Chiavi licenza e altri dettagli non necessari vengono scartati.
-Nessun campo descrive la copertura commerciale delle singole postazioni.
+Nessun campo descrive le date commerciali locali dei singoli computer.
 La chiave deve avere accesso anche al servizio Licensing.
 Fonte: [getLicenseInfo](https://www.bitdefender.com/business/support/en/77211-127105-getlicenseinfo.html).
 
@@ -65,20 +65,35 @@ Fonte: [getNetworkInventoryItems](https://www.bitdefender.com/business/support/e
 L’ID API è univoco; il nome è aggiornabile e non provoca associazioni locali.
 Prima di cambiare i dati si controllano i conflitti di appartenenza fra tutte
 le aziende lette. Gli inventari ambigui conservano i dati precedenti.
-Gli aggiornamenti sono transazionali per azienda. Le postazioni locali
-hanno una relazione opzionale e univoca con l’endpoint: l’operatore la sceglie
-esplicitamente, con validazione e blocco delle righe in transazione.
-Una variazione remota di azienda conserva l’azienda locale della postazione.
+Gli aggiornamenti sono transazionali per azienda. Ogni elemento importato
+crea direttamente un `Computer` con `gravityzone_id` univoco, nome tecnico,
+azienda remota e altri dettagli tecnici; le date commerciali iniziano vuote.
+Non vengono più creati o associati record di postazioni/coperture separate.
+L’upsert aggiorna soltanto i campi remoti: non cambia azienda locale,
+date commerciali, prodotto, prezzo, riferimenti, note, versione o storico.
+
+`company_id` conserva l’appartenenza locale, mentre `gravityzone_company_id`
+segue quella rilevata. Le assenze si calcolano sull’azienda remota: uno
+spostamento fra aziende non deve segnare assente un computer appena rilevato
+nell’altra azienda. Il pannello segnala la differenza senza trasferire dati
+commerciali automaticamente. I computer manuali hanno riferimento remoto nullo.
+La riconciliazione esplicita di un PC manuale con un import vuoto della stessa
+azienda avviene in transazione, mantenendo un solo record con l’ID remoto.
+I vincoli locali sono descritti in [licenses.md](licenses.md).
 
 Le fixture `inventory-ad-folders.json`, `inventory-page-1.json` e
 `inventory-page-2.json` sono proiezioni anonime dell’esempio AD ufficiale;
 i tre computer sono distribuiti intenzionalmente su due pagine simulate.
 Non sono snapshot reali né riproduzioni delle incongruenze dell’esempio
-v1.1 generale. Il primo collaudo reale ha importato 102 endpoint unici di
-16 aziende, senza errori o postazioni locali automatiche. Un secondo import
-ha mantenuto i 102 ID e il collegamento a una postazione manuale creata e
-associata dal browser; nome e note locali sono rimasti invariati. La postazione
-di prova è stata poi rimossa dal solo database di sviluppo.
+v1.1 generale.
+
+**Collaudo storico, precedente a #26:** il primo import reale aveva letto
+102 endpoint unici di 16 aziende senza errori. Un secondo import aveva
+mantenuto gli ID e il collegamento a una postazione manuale creata dal browser,
+conservandone nome e note; il record di prova era stato poi rimosso dal solo DB
+di sviluppo. Questi risultati riguardano il vecchio schema e non certificano
+il nuovo flusso `Computer`. Il contratto e i metodi remoti restano invariati;
+nessun nuovo test live del refactor #26 è documentato qui.
 
 ## Ripetibilità, errori e limiti
 
@@ -98,10 +113,10 @@ Fonte: [limiti API](https://www.bitdefender.com/business/support/en/77211-394430
 
 Un lock cache condiviso da comandi e pannello impedisce avvii sovrapposti
 anche fra import aziende e endpoint.
-Il lock scade dopo un’ora in caso di terminazione anomala. Il pannello mostra
-ultimo tentativo, ultima lettura elenco riuscita ed errori; ogni azienda
-conserva ultima presenza e ultima lettura licenza riuscita. Un processo
-interrotto lascia visibile lo stato non completato. La cache database nativa
+Il lock scade dopo un’ora in caso di terminazione anomala. Il riepilogo aziendale mostra lo stato di sincronizzazione
+disponibile; il database conserva tentativi, letture
+riuscite ed errori globali/per azienda, ultima presenza e lettura licenza.
+Un processo interrotto lascia visibile lo stato non completato. La cache database nativa
 non richiede Redis o worker.
 
 ## Fixture e collaudo
@@ -112,9 +127,9 @@ sostituendo nomi/ID aziendali e chiavi licenza con dati fittizi. Tutte usano
 l’ID RPC fisso `103d7b05-ec02-481b-9ed6-c07b97de2b7a` delle richieste.
 I test non usano credenziali reali e bloccano richieste HTTP non simulate.
 
-Il cliente ha inserito la chiave nel pannello e autorizzato la ripresa.
-`getCompaniesList` e `getLicenseInfo` sono stati verificati realmente su
-16 aziende: import dal pannello e successiva sincronizzazione da CLI senza
+**Collaudo storico, precedente a #26:** dopo inserimento della chiave nel
+pannello e autorizzazione del cliente, `getCompaniesList` e `getLicenseInfo`
+sono stati verificati realmente su 16 aziende: import dal pannello e successiva sincronizzazione da CLI senza
 duplicati, con contatto e nota locali temporanei conservati e poi rimossi.
 Tutte le 16 licenze hanno esposto una scadenza; nessun errore di lettura.
 Le fixture restano documentali: nessun payload cliente è salvato nel repository.
