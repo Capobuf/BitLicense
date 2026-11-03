@@ -35,6 +35,7 @@ class GravityZoneLicenseTest extends TestCase
         $this->assertSame([
             'technical_license_type' => 'Licenza',
             'technical_expires_on' => '2021-12-28',
+            'technical_product' => null,
         ], $this->readLicense());
 
         Http::assertSent(fn (Request $request): bool => $request->method() === 'POST' &&
@@ -56,7 +57,7 @@ class GravityZoneLicenseTest extends TestCase
         // Official monthly Endpoint Security example; only RPC ID is replaced.
         Http::fake(['*' => Http::response(file_get_contents(base_path('tests/Fixtures/GravityZone/license-monthly.json')))]);
 
-        $this->assertSame(['technical_license_type' => 'Mensile', 'technical_expires_on' => null], $this->readLicense());
+        $this->assertSame(['technical_license_type' => 'Mensile', 'technical_expires_on' => null, 'technical_product' => null], $this->readLicense());
     }
 
     public function test_only_the_main_license_calendar_date_is_used_without_timezone_conversion(): void
@@ -67,7 +68,7 @@ class GravityZoneLicenseTest extends TestCase
             'additionalLicenses' => [['expiryDate' => '2030-01-01T00:00:00', 'licenseKey' => 'private-data']],
         ]))]);
 
-        $this->assertSame(['technical_license_type' => 'Licenza', 'technical_expires_on' => '2028-02-29'], $this->readLicense());
+        $this->assertSame(['technical_license_type' => 'Licenza', 'technical_expires_on' => '2028-02-29', 'technical_product' => null], $this->readLicense());
     }
 
     public function test_an_unknown_remote_timezone_does_not_apply_italian_daylight_saving_rules(): void
@@ -85,7 +86,39 @@ class GravityZoneLicenseTest extends TestCase
     {
         Http::fake(['*' => Http::response($this->envelope(['subscriptionType' => $type, 'expiryDate' => null]))]);
 
-        $this->assertSame(['technical_license_type' => $label, 'technical_expires_on' => null], $this->readLicense());
+        $this->assertSame(['technical_license_type' => $label, 'technical_expires_on' => null, 'technical_product' => null], $this->readLicense());
+    }
+
+    #[DataProvider('companyProducts')]
+    public function test_only_documented_assigned_company_products_and_models_are_used(array $license, ?string $label): void
+    {
+        // Values and availability conditions from the official getLicenseInfo contract.
+        Http::fake(['*' => Http::response($this->envelope($license + [
+            'subscriptionType' => 3, 'additionalProductTypes' => [3, 5],
+            'additionalProtectionModels' => ['mspSecureExtra'], 'licenseKey' => 'private-data',
+        ]))]);
+
+        $this->assertSame($label, $this->readLicense()['technical_product']);
+    }
+
+    public static function companyProducts(): array
+    {
+        return [
+            'missing' => [[], null],
+            'endpoint' => [['assignedProductType' => 0], 'Endpoint Security'],
+            'edr' => [['assignedProductType' => 3], 'Bitdefender EDR'],
+            'phasr' => [['assignedProductType' => 5], 'Bitdefender PHASR'],
+            'a la carte' => [['assignedProductType' => 0, 'assignedProtectionModel' => 'aLaCarte'], 'Endpoint Security · À la carte'],
+            'essentials' => [['assignedProductType' => 0, 'assignedProtectionModel' => 'mspSecureEssentials'], 'Endpoint Security · MSP Secure Essentials'],
+            'secure' => [['assignedProductType' => 0, 'assignedProtectionModel' => 'mspSecure'], 'Endpoint Security · MSP Secure'],
+            'plus' => [['assignedProductType' => 0, 'assignedProtectionModel' => 'mspSecurePlus'], 'Endpoint Security · MSP Secure Plus'],
+            'extra' => [['assignedProductType' => 0, 'assignedProtectionModel' => 'mspSecureExtra'], 'Endpoint Security · MSP Secure Extra'],
+            'unknown product' => [['assignedProductType' => 99, 'assignedProtectionModel' => 'mspSecure'], null],
+            'unknown model' => [['assignedProductType' => 0, 'assignedProtectionModel' => 'private-data'], 'Endpoint Security'],
+            'model without product' => [['assignedProtectionModel' => 'mspSecure'], null],
+            'other product model' => [['assignedProductType' => 3, 'assignedProtectionModel' => 'mspSecure'], 'Bitdefender EDR'],
+            'trial without model' => [['subscriptionType' => 5, 'assignedProductType' => 0], 'Endpoint Security'],
+        ];
     }
 
     public static function subscriptionTypes(): array
@@ -110,6 +143,9 @@ class GravityZoneLicenseTest extends TestCase
             'missing type' => [['licenseKey' => 'private-data']],
             'string type' => [['subscriptionType' => '2']],
             'boolean type' => [['subscriptionType' => true]],
+            'string product type' => [['subscriptionType' => 3, 'assignedProductType' => '0']],
+            'boolean product type' => [['subscriptionType' => 3, 'assignedProductType' => true]],
+            'invalid protection model' => [['subscriptionType' => 3, 'assignedProtectionModel' => ['private-data']]],
         ];
 
         foreach (['2027-02-29T12:00:00', '2028-04-31T12:00:00', '2028-02-29T24:00:00', '2028-02-29', '2028-02-29T12:00:00Z', '2028-02-29T12:00:00+01:00', '', 'private-data', 123] as $index => $expiry) {

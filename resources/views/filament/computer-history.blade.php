@@ -1,4 +1,4 @@
-<div style="display: grid; gap: 1rem">
+<div style="display: grid; gap: 1rem; overflow-wrap: anywhere">
     @foreach (array_reverse($history) as $entry)
         <div>
             <strong>{{ \Carbon\CarbonImmutable::parse($entry['recorded_at'])->timezone('Europe/Rome')->format('d/m/Y H:i') }} · {{ match ($entry['event']) { 'transferred_out' => 'Trasferita al sostitutivo', 'transferred_in' => 'Ricevuta dal PC precedente', 'reconciled' => 'Collegamento GravityZone', default => 'Modifica dati commerciali' } }}</strong>
@@ -10,6 +10,7 @@
                 {{ isset($entry['previous']['expires_on']) ? \Carbon\CarbonImmutable::parse($entry['previous']['expires_on'])->format('d/m/Y') : 'Scadenza mancante' }} ·
                 {{ isset($entry['previous']['price_cents']) ? number_format($entry['previous']['price_cents'] / 100, 2, ',', '.').' €' : 'Prezzo non indicato' }}
             </p>
+            @if ($entry['previous']['commercial_description'] ?? null)<p>Descrizione commerciale: {{ $entry['previous']['commercial_description'] }}</p>@endif
             @if ($entry['previous']['invoice_reference'] ?? null)<p>Fattura: {{ $entry['previous']['invoice_reference'] }}</p>@endif
             @if ($entry['previous']['quote_reference'] ?? null)<p>Preventivo: {{ $entry['previous']['quote_reference'] }}</p>@endif
         </div>

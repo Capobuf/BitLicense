@@ -88,7 +88,7 @@ class Licenze extends Dashboard implements HasTable
 
     public function table(Table $table): Table
     {
-        return $table->query(fn (): Builder => Computer::query()->where('company_id', $this->data['company_id'] ?? null)->with('gravityzoneCompany'))
+        return $table->query(fn (): Builder => Computer::query()->where('company_id', $this->data['company_id'] ?? null)->with(['company', 'gravityzoneCompany']))
             ->header(fn () => view('filament.licenses-company', [
                 'company' => Company::find($this->data['company_id'] ?? null),
                 'settings' => GravityZoneSetting::query()->select(['id', 'companies_sync_error', 'endpoints_sync_error', 'endpoints_synced_at'])->find(1),
@@ -99,7 +99,7 @@ class Licenze extends Dashboard implements HasTable
                     ->description(fn (Computer $record): string => $record->gravityzone_id === null ? 'Manuale' : ($record->gravityzone_company_id !== $record->company_id
                         ? 'Da verificare: rilevato in '.$record->gravityzoneCompany?->name
                         : ($record->is_present ? 'GravityZone' : 'Non più rilevato · dati conservati'))),
-                TextColumn::make('product')->label('Prodotto / licenza')->placeholder('Da indicare')->wrap(),
+                TextColumn::make('company_product')->label('Prodotto aziendale')->placeholder('Non fornito dall’API')->wrap(),
                 TextColumn::make('activated_on')->label('Attivazione')->date()->placeholder('Da completare')->sortable(),
                 TextColumn::make('expires_on')->label('Scadenza commerciale')->date()->placeholder('Da completare')->sortable(),
                 TextColumn::make('status')->label('Stato')->badge()->state(fn (Computer $record): string => self::status($record))
@@ -153,8 +153,12 @@ class Licenze extends Dashboard implements HasTable
                 ->visible(fn (?Computer $record): bool => $record?->gravityzone_id === null),
             TextEntry::make('technical_name')->label('Nome tecnico GravityZone · sola lettura')
                 ->visible(fn (?Computer $record): bool => $record?->gravityzone_id !== null),
-            TextInput::make('product')->label('Prodotto / licenza')->maxLength(255)
-                ->helperText('Facoltativo. Indicalo manualmente se non disponibile.'),
+            TextEntry::make('company_product')->label('Prodotto aziendale · GravityZone')
+                ->state(fn (?Computer $record): ?string => $record === null
+                    ? Company::find($this->creatingCompanyId)?->technical_product : $record->company_product)
+                ->placeholder('Non fornito dall’API')->wrap(),
+            TextEntry::make('product')->label('Prodotto commerciale salvato')->wrap()
+                ->visible(fn (?Computer $record): bool => filled($record?->product)),
             DatePicker::make('activated_on')->label('Data attivazione')->native(false)->displayFormat('d/m/Y')->nullable()->live()
                 ->afterStateUpdated(function (mixed $state, Get $get, Set $set): void {
                     if (filled($state) && blank($get('expires_on')) && validator(['date' => $state], ['date' => 'date_format:Y-m-d'])->passes()) {
@@ -166,7 +170,6 @@ class Licenze extends Dashboard implements HasTable
             TextInput::make('amount')->label('Prezzo facoltativo')->prefix('€')->inputMode('decimal')->nullable()
                 ->rules(['string', 'regex:'.Euro::PATTERN])->maxLength(12)
                 ->validationMessages(['regex' => 'Usa un importo non negativo con al massimo due decimali, senza separatori delle migliaia.']),
-            Textarea::make('commercial_description')->label('Descrizione commerciale')->maxLength(10000)->rows(2)->columnSpanFull(),
             TextInput::make('invoice_reference')->label('Riferimento fattura')->maxLength(255),
             TextInput::make('quote_reference')->label('Riferimento preventivo')->maxLength(255),
             Textarea::make('notes')->label('Note')->maxLength(10000)->rows(2)->columnSpanFull(),
@@ -189,7 +192,7 @@ class Licenze extends Dashboard implements HasTable
             ])->fillForm(function (Computer $record): array {
                 $this->expectedVersions = [$record->id => $record->commercial_version];
 
-                return $record->only(['name', 'product', 'commercial_description', 'invoice_reference', 'quote_reference', 'notes']) + [
+                return $record->only(['name', 'invoice_reference', 'quote_reference', 'notes']) + [
                     'activated_on' => $record->activated_on?->toDateString(), 'expires_on' => $record->expires_on?->toDateString(),
                     'amount' => $record->price_cents === null ? null : Euro::fromCents($record->price_cents),
                 ];
@@ -204,7 +207,7 @@ class Licenze extends Dashboard implements HasTable
         return Action::make('transfer')->label('Trasferisci licenza al sostitutivo')->authorize('update')
             ->visible(fn (Computer $record): bool => $record->activated_on !== null && $record->expires_on !== null)
             ->modalHeading('Trasferisci la licenza pagata')->modalSubmitActionLabel('Conferma trasferimento')
-            ->modalDescription('Date, prodotto, prezzo e riferimenti passano al PC scelto. Il PC precedente conserva lo storico, senza una seconda licenza attiva. Nessuna modifica a GravityZone.')
+            ->modalDescription('I dati commerciali passano al PC scelto; il precedente conserva lo storico, senza duplicare il periodo pagato. Il prodotto aziendale segue GravityZone, che non viene modificato.')
             ->fillForm(function (Computer $record): array {
                 $this->expectedVersions = [$record->id => $record->commercial_version];
 
@@ -212,8 +215,10 @@ class Licenze extends Dashboard implements HasTable
             })->schema([
                 TextEntry::make('expires_on')->label('Scadenza conservata')->date(),
                 Select::make('target_id')->label('Computer sostitutivo')->required()->searchable()
+                    ->noOptionsMessage('Nessun computer disponibile senza dati commerciali.')
                     ->options(fn (Computer $record): array => Computer::query()->where('company_id', $record->company_id)->whereKeyNot($record->id)
                         ->whereNull('activated_on')->whereNull('expires_on')->orderBy('id')->get()
+                        ->reject(fn (Computer $pc): bool => $pc->hasCommercialData())
                         ->mapWithKeys(fn (Computer $pc): array => [$pc->id => '#'.$pc->id.' · '.$pc->display_name])->all()),
             ])->action(function (Computer $record, array $data, Schema $schema, Action $action): void {
                 Gate::authorize('update', $record);
@@ -233,9 +238,12 @@ class Licenze extends Dashboard implements HasTable
                 return [];
             })->schema([
                 Select::make('target_id')->label('Computer rilevato')->required()->searchable()
+                    ->noOptionsMessage('Nessun computer GravityZone disponibile senza dati locali o storico.')
                     ->options(fn (Computer $record): array => Computer::query()->where('company_id', $record->company_id)
                         ->where('gravityzone_company_id', $record->company_id)->whereNotNull('gravityzone_id')->where('is_present', true)
+                        ->whereHas('gravityzoneCompany', fn (Builder $query): Builder => $query->where('is_present', true))
                         ->whereNull('activated_on')->whereNull('expires_on')->orderBy('id')->get()
+                        ->reject(fn (Computer $pc): bool => $pc->hasCommercialData() || filled($pc->notes) || filled($pc->name) || ! empty($pc->history))
                         ->mapWithKeys(fn (Computer $pc): array => [$pc->id => $pc->display_name.' · ID '.$pc->gravityzone_id.' · '.($pc->platform ?? 'Sistema non noto')])->all()),
             ])->action(function (Computer $record, array $data, Schema $schema, Action $action): void {
                 Gate::authorize('update', $record);

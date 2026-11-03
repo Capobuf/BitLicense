@@ -48,6 +48,11 @@ class Computer extends Model
         return Attribute::get(fn (): ?string => $this->technical_name ?? $this->name);
     }
 
+    protected function companyProduct(): Attribute
+    {
+        return Attribute::get(fn (): ?string => ($this->gravityzone_id === null ? $this->company : $this->gravityzoneCompany)?->technical_product);
+    }
+
     public function company(): BelongsTo
     {
         return $this->belongsTo(Company::class);
@@ -172,7 +177,7 @@ class Computer extends Model
         return $data;
     }
 
-    private function hasCommercialData(): bool
+    public function hasCommercialData(): bool
     {
         return array_filter($this->commercialSnapshot(), fn ($value) => $value !== null && $value !== '') !== [];
     }

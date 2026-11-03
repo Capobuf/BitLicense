@@ -1,6 +1,6 @@
 # Contratto GravityZone verificato
 
-Verifica documentale: 2 novembre 2026. Il client espone soltanto tre letture
+Verifica documentale: 3 novembre 2026. Il client espone soltanto tre letture
 esplicite: `getCompaniesList`, `getNetworkInventoryItems` (Network) e
 `getLicenseInfo` (Licensing).
 Non contiene un invocatore RPC generico o metodi che modificano GravityZone.
@@ -28,7 +28,7 @@ Legge la licenza principale; non richiede `returnAllProducts` e non aggrega
 le diverse scadenze di `additionalLicenses`. Il risultato degli esempi è
 un oggetto, benché la prosa del contratto lo definisca Array.
 
-Vengono conservati soltanto il tipo di abbonamento `subscriptionType`
+Vengono conservati il tipo di abbonamento `subscriptionType`
 (1 prova, 2 licenza, 3 mensile, 4 licenza mensile di prova, 5 abbonamento
 mensile di prova, 6 FRAT) e la parte calendario di `expiryDate`.
 La data può mancare o essere nulla: viene mostrata come **Non disponibile**.
@@ -39,6 +39,21 @@ Chiavi licenza e altri dettagli non necessari vengono scartati.
 Nessun campo descrive le date commerciali locali dei singoli computer.
 La chiave deve avere accesso anche al servizio Licensing.
 Fonte: [getLicenseInfo](https://www.bitdefender.com/business/support/en/77211-127105-getlicenseinfo.html).
+
+Su richiesta del committente, si legge anche il **prodotto aziendale**:
+`assignedProductType` (0 Endpoint Security, 3 Bitdefender EDR, 5 Bitdefender PHASR),
+documentato per abbonamenti mensili e prove mensili. Per Endpoint Security
+mensile si aggiunge `assignedProtectionModel`, quando noto: À la carte,
+MSP Secure Essentials, MSP Secure, MSP Secure Plus o MSP Secure Extra.
+`additionalProductTypes` e `additionalProtectionModels` sono possibilità di
+assegnazione ai clienti, non prodotti attualmente acquistati: non vengono usati.
+Campi mancanti/nulli o codici prodotto sconosciuti producono **Non fornito
+dall’API**; non si deduce un’edizione commerciale dai moduli installati.
+Un modello sconosciuto non nasconde il tipo prodotto noto. Tipi JSON errati
+provocano un errore sanitizzato e conservano i dati precedenti.
+La lettura usa la chiamata già esistente, senza richieste aggiuntive. I casi
+dei test derivano dai valori/condizioni del contratto ufficiale; non sono payload
+cliente e questa aggiunta non è ancora stata verificata con l’API reale.
 
 ## Inventario endpoint
 
@@ -105,10 +120,21 @@ Le licenze sono acquisite separatamente: errori puntuali non bloccano le
 altre aziende; errori di rete, HTTP e 429 interrompono le letture successive.
 La mancata acquisizione dell’elenco non modifica le aziende esistenti.
 
-Le letture Licensing sono distanziate di almeno 250 ms, sotto il limite
-documentato di cinque richieste al secondo. Non vengono eseguiti retry
-automatici. HTTP 429 mostra `Retry-After` come secondi residui, anche quando
-l’header contiene una data RFC 7231.
+I limiti documentati sono per chiave API: cinque richieste al secondo per
+`getLicenseInfo` e `getNetworkInventoryItems`, dieci per `getCompaniesList`
+(limite predefinito). Le letture di licenze/inventario sono sequenziali e
+distanziate di almeno 250 ms, quindi al massimo quattro al secondo nel singolo
+import; il lock condiviso impedisce sincronizzazioni sovrapposte.
+Non vengono eseguiti retry automatici. HTTP 429 interrompe l’import e salva
+in cache il termine di attesa indicato da `Retry-After`, in secondi o data
+RFC 7231. Fino a quel momento tutte le letture, incluse verifica connessione
+e nuovi avvii da pannello/CLI, sono rifiutate localmente senza chiamare l’API.
+Se l’header manca o non è valido, BitLicense applica una pausa prudenziale di
+60 secondi: è una scelta applicativa, non un limite dichiarato da Bitdefender.
+Il messaggio mostra il tempo residuo; non mantiene la richiesta browser in
+attesa e non richiede Redis o worker. Altre applicazioni con la stessa chiave
+possono comunque consumare la quota; le loro richieste non sono controllate
+da BitLicense. Non si usa la coda burst remota per aumentare la frequenza.
 Fonte: [limiti API](https://www.bitdefender.com/business/support/en/77211-394430-api-rate-limits.html).
 
 Un lock cache condiviso da comandi e pannello impedisce avvii sovrapposti

@@ -16,10 +16,13 @@ use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Contracts\Encryption\EncryptException;
 use Illuminate\Database\QueryException;
+use UnitEnum;
 
 class GravityZoneSettings extends Page
 {
-    protected static ?string $title = 'Integrazione GravityZone';
+    protected static ?string $title = 'API';
+
+    protected static string|UnitEnum|null $navigationGroup = 'Impostazioni';
 
     protected static ?string $slug = 'gravityzone';
 
@@ -46,7 +49,7 @@ class GravityZoneSettings extends Page
     public function form(Schema $schema): Schema
     {
         return $schema->statePath('data')->components([
-            Section::make('Connessione API')
+            Section::make('GravityZone')
                 ->description('Una sola chiave per BitLicense. L’integrazione consente esclusivamente operazioni di lettura.')
                 ->schema([
                     TextInput::make('api_url')->label('URL base API')->required()->url()->maxLength(2048)

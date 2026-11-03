@@ -12,6 +12,7 @@ use App\Models\GravityZoneSetting;
 use App\Models\User;
 use Filament\Actions\Testing\TestAction;
 use Filament\Facades\Filament;
+use Filament\Forms\Components\Select;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
@@ -72,8 +73,8 @@ class LicenzeTest extends TestCase
         $pc = Computer::sole();
         $this->assertNull($pc->gravityzone_id);
         $page->callAction(TestAction::make('edit')->table($pc), data: [
-            'name' => 'PC ufficio', 'product' => 'Suite con add-on', 'activated_on' => '2026-04-20', 'expires_on' => '2027-04-20',
-            'amount' => '79,90', 'commercial_description' => 'Descrizione', 'invoice_reference' => 'FT-12', 'quote_reference' => 'PR-14', 'notes' => 'Note locali',
+            'name' => 'PC ufficio', 'activated_on' => '2026-04-20', 'expires_on' => '2027-04-20',
+            'amount' => '79,90', 'invoice_reference' => 'FT-12', 'quote_reference' => 'PR-14', 'notes' => 'Note locali',
         ])->assertHasNoFormErrors();
         $this->assertSame($company->id, $pc->refresh()->company_id);
         $this->assertSame(7990, $pc->price_cents);
@@ -89,6 +90,34 @@ class LicenzeTest extends TestCase
             ->set('mountedActions.0.data.activated_on', '2028-02-29')->assertActionDataSet(['expires_on' => '2029-02-28'])
             ->set('mountedActions.0.data.expires_on', '2030-12-31')->set('mountedActions.0.data.activated_on', '2028-03-01')
             ->assertActionDataSet(['expires_on' => '2030-12-31']);
+    }
+
+    public function test_company_product_is_read_only_and_follows_remote_company_without_overwriting_saved_local_product(): void
+    {
+        $company = $this->company();
+        $company->forceFill(['technical_product' => 'Endpoint Security · MSP Secure'])->save();
+        $other = $this->company();
+        $other->forceFill(['technical_product' => 'Bitdefender EDR'])->save();
+        $manual = $this->computer($company, ['product' => 'Prodotto precedente']);
+        $moved = $this->computer($company, ['gravityzone_id' => 'remote-moved', 'gravityzone_company_id' => $other->id]);
+        $page = Livewire::test(Licenze::class)->set('data.company_id', $company->id)
+            ->assertTableColumnStateSet('company_product', 'Endpoint Security · MSP Secure', $manual)
+            ->assertTableColumnStateSet('company_product', 'Bitdefender EDR', $moved)
+            ->mountAction(TestAction::make('edit')->table($manual))->assertFormFieldDoesNotExist('product');
+        $html = $page->instance()->mountedActionSchema0->toHtml();
+        $this->assertStringContainsString('Endpoint Security · MSP Secure', $html);
+        $this->assertStringContainsString('Prodotto precedente', $html);
+        $page->set('mountedActions.0.data.company_product', 'MANOMESSO')
+            ->set('mountedActions.0.data.product', 'MANOMESSO')
+            ->fillForm(['notes' => 'Nota aggiornata'])->callMountedAction()->assertHasNoFormErrors();
+        $this->assertSame('Prodotto precedente', $manual->refresh()->product);
+        $this->assertSame('Endpoint Security · MSP Secure', $company->refresh()->technical_product);
+
+        $page = Livewire::test(Licenze::class)->set('data.company_id', $company->id)->mountAction('create');
+        $this->assertStringContainsString('Endpoint Security · MSP Secure', $page->instance()->mountedActionSchema0->toHtml());
+        $other->forceFill(['technical_product' => null])->save();
+        Livewire::test(Licenze::class)->set('data.company_id', $company->id)->assertSee('Non fornito dall’API');
+        Http::assertNothingSent();
     }
 
     public function test_invalid_dates_and_amounts_fail_atomically_and_show_field_errors(): void
@@ -138,6 +167,61 @@ class LicenzeTest extends TestCase
                 ->callAction(TestAction::make('transfer')->table($pc), data: ['target_id' => $target->id])->assertHasFormErrors(['target_id']);
         }
         $this->assertNotNull($pc->refresh()->expires_on);
+    }
+
+    public function test_replacement_choices_exclude_commercial_data_and_recheck_a_target_changed_after_opening(): void
+    {
+        $company = $this->company();
+        $source = $this->computer($company, ['activated_on' => '2026-04-20', 'expires_on' => '2027-04-20']);
+        $available = $this->computer($company, ['notes' => 'Note da conservare']);
+        $this->computer($this->company());
+        foreach (['product' => 'Prodotto', 'price_cents' => 0, 'commercial_description' => 'Descrizione', 'invoice_reference' => 'FT-1', 'quote_reference' => 'PR-1', 'expires_on' => '2027-01-01'] as $field => $value) {
+            $this->computer($company, [$field => $value]);
+        }
+        $page = Livewire::test(Licenze::class)->set('data.company_id', $company->id)
+            ->mountAction(TestAction::make('transfer')->table($source))
+            ->assertFormFieldExists('target_id', fn (Select $field): bool => array_keys($field->getOptions()) === [$available->id])
+            ->fillForm(['target_id' => $available->id]);
+        $available->updateCommercial(['amount' => '0'], 0);
+        $page->callMountedAction()->assertHasFormErrors(['target_id']);
+        $this->assertSame('2027-04-20', $source->refresh()->expires_on->toDateString());
+        $this->assertNull($available->refresh()->expires_on);
+        $this->assertSame(0, $available->price_cents);
+        $this->assertSame('Note da conservare', $available->notes);
+    }
+
+    public function test_reconciliation_choices_exclude_imports_with_local_data_history_or_absent_company(): void
+    {
+        $company = $this->company();
+        $manual = $this->computer($company);
+        $remote = ['name' => null, 'gravityzone_company_id' => $company->id, 'technical_name' => 'PC rilevato'];
+        $available = $this->computer($company, $remote + ['gravityzone_id' => 'available']);
+        foreach ([['product' => 'Prodotto'], ['price_cents' => 0], ['notes' => 'Nota'], ['name' => 'Nome locale'], ['history' => [['event' => 'updated']]], ['is_present' => false], ['gravityzone_company_id' => $this->company()->id]] as $index => $attributes) {
+            $this->computer($company, array_replace($remote, ['gravityzone_id' => 'excluded-'.$index], $attributes));
+        }
+        Livewire::test(Licenze::class)->set('data.company_id', $company->id)
+            ->mountAction(TestAction::make('reconcile')->table($manual))
+            ->assertFormFieldExists('target_id', fn (Select $field): bool => array_keys($field->getOptions()) === [$available->id]);
+        $company->forceFill(['is_present' => false])->save();
+        Livewire::test(Licenze::class)->set('data.company_id', $company->id)
+            ->mountAction(TestAction::make('reconcile')->table($manual))
+            ->assertFormFieldExists('target_id', fn (Select $field): bool => $field->getOptions() === []);
+    }
+
+    public function test_history_shows_the_previous_commercial_description_as_escaped_text(): void
+    {
+        $company = $this->company();
+        $description = 'Descrizione precedente <script>alert(1)</script>';
+        $pc = $this->computer($company, ['commercial_description' => $description]);
+        $pc->updateCommercial(['commercial_description' => 'Descrizione corrente'], 0);
+        $page = Livewire::test(Licenze::class)->set('data.company_id', $company->id)
+            ->mountAction(TestAction::make('edit')->table($pc))->assertFormFieldDoesNotExist('commercial_description');
+        $html = $page->instance()->mountedActionSchema0->toHtml();
+        $this->assertStringContainsString(e($description), $html);
+        $this->assertStringNotContainsString($description, $html);
+        $page->set('mountedActions.0.data.commercial_description', 'Non salvare')
+            ->fillForm(['notes' => 'Nota aggiornata'])->callMountedAction()->assertHasNoFormErrors();
+        $this->assertSame('Descrizione corrente', $pc->refresh()->commercial_description);
     }
 
     public function test_status_filter_handles_missing_dates_today_future_and_thirty_day_boundary(): void

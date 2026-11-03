@@ -1,0 +1,13 @@
+.fi-ta-placeholder,
+.fi-in-placeholder {
+    color: var(--gray-600);
+}
+
+.dark .fi-ta-placeholder,
+.dark .fi-in-placeholder {
+    color: var(--gray-400);
+}
+
+.dark .fi-ta-table-stacked-sorting .fi-input-wrp-label {
+    color: var(--gray-300);
+}

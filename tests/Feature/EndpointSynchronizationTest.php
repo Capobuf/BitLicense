@@ -38,8 +38,13 @@ class EndpointSynchronizationTest extends TestCase
         $this->assertNull($computer->activated_on);
         $this->assertNull($computer->expires_on);
         $this->assertNull($computer->product);
-        $computer->updateCommercial(['activated_on' => '2026-05-01', 'expires_on' => '2027-05-01', 'notes' => 'Nota locale', 'amount' => '90,50'], 0);
-        $before = $computer->only(['activated_on', 'expires_on', 'notes', 'price_cents', 'commercial_version', 'history']);
+        $computer->updateCommercial([
+            'activated_on' => '2026-05-01', 'expires_on' => '2027-05-01', 'notes' => 'Nota locale', 'amount' => '90,50',
+            'product' => 'Suite locale', 'commercial_description' => 'Licenza acquistata', 'invoice_reference' => 'FT-1', 'quote_reference' => 'PR-1',
+        ], 0);
+        $computer->updateCommercial(['expires_on' => '2028-05-01'], 1);
+        $this->assertNotEmpty($computer->history);
+        $before = $computer->only(['activated_on', 'expires_on', 'notes', 'price_cents', 'product', 'commercial_description', 'invoice_reference', 'quote_reference', 'commercial_version', 'history']);
         $this->travel(1)->hours();
         $this->mockItems(['company-1' => [$this->item('endpoint-1', 'NOME-NUOVO')]]);
 
