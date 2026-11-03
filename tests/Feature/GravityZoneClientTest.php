@@ -178,27 +178,55 @@ class GravityZoneClientTest extends TestCase
     }
 
     #[DataProvider('retryAfterHeaders')]
-    public function test_rate_limiting_reports_retry_after_without_retrying(string $header, string $expected): void
+    public function test_rate_limiting_reports_retry_after_without_retrying(string $header, int $seconds): void
     {
         $this->travelTo(new \DateTimeImmutable('2026-11-02 12:00:00 UTC'));
         Http::fake(['*' => Http::response(self::TEST_KEY, 429, ['Retry-After' => $header])]);
 
         $message = $this->assertSanitizedFailure();
-        $this->assertStringContainsString($expected, $message);
+        $this->assertStringContainsString("tra {$seconds} secondi", $message);
         Http::assertSentCount(1);
     }
 
     public static function retryAfterHeaders(): array
     {
         return [
-            'seconds' => ['90', 'tra 90 secondi'],
-            'zero' => ['0', 'tra 0 secondi'],
-            'HTTP date' => ['Mon, 02 Nov 2026 12:01:30 GMT', 'tra 90 secondi'],
-            'past date' => ['Mon, 02 Nov 2026 11:59:30 GMT', 'tra 0 secondi'],
-            'missing header' => ['', 'Attendi prima di riprovare'],
-            'invalid header' => ['private-data', 'Attendi prima di riprovare'],
-            'invalid HTTP date' => ['Mon, 32 Nov 2026 12:01:30 GMT', 'Attendi prima di riprovare'],
+            'seconds' => ['90', 90],
+            'zero' => ['0', 0],
+            'HTTP date' => ['Mon, 02 Nov 2026 12:01:30 GMT', 90],
+            'past date' => ['Mon, 02 Nov 2026 11:59:30 GMT', 0],
+            'missing header' => ['', 60],
+            'invalid header' => ['private-data', 60],
+            'invalid HTTP date' => ['Mon, 32 Nov 2026 12:01:30 GMT', 60],
         ];
+    }
+
+    #[DataProvider('retryAfterHeaders')]
+    public function test_retry_after_blocks_all_read_methods_across_client_instances_until_it_expires(string $header, int $seconds): void
+    {
+        $this->travelTo(new \DateTimeImmutable('2026-11-02 12:00:00 UTC'));
+        Http::fakeSequence()
+            ->push(self::TEST_KEY, 429, ['Retry-After' => $header])
+            ->push(['id' => self::RPC_ID, 'jsonrpc' => '2.0', 'result' => []]);
+        $this->assertSanitizedFailure();
+
+        if ($seconds > 0) {
+            $this->travel($seconds - 1)->seconds();
+            foreach (GravityZoneClient::READ_ONLY_METHODS as $method) {
+                try {
+                    (new GravityZoneClient)->{$method}($this->settings(), 'company-1');
+                    $this->fail('Nessuna lettura deve partire durante l’attesa condivisa.');
+                } catch (GravityZoneException $exception) {
+                    $this->assertTrue($exception->stopSynchronization);
+                    $this->assertStringContainsString('Riprova tra 1', $exception->getMessage());
+                }
+            }
+            Http::assertSentCount(1);
+            $this->travel(1)->seconds();
+        }
+
+        $this->assertSame([], (new GravityZoneClient)->getCompaniesList($this->settings()));
+        Http::assertSentCount(2);
     }
 
     public function test_a_trailing_slash_is_normalized_and_native_transport_safety_options_are_preserved(): void

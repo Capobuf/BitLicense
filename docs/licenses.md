@@ -11,11 +11,21 @@ locali dei singoli PC. I due tipi di scadenza sono indipendenti.
 GravityZone opzionale e i dati locali. Non esistono più modelli separati per
 endpoint, postazioni, coperture e assegnazioni, né un catalogo prodotti/prezzi.
 
-Ogni computer ha prodotto libero, data di attivazione, scadenza, prezzo,
-descrizione commerciale, riferimenti fattura/preventivo e note, tutti
+Ogni computer ha data di attivazione, scadenza, prezzo,
+riferimenti fattura/preventivo e note, tutti
 facoltativi. Un PC manuale richiede il nome e usa l’azienda selezionata.
-Il nome tecnico GravityZone è in sola lettura. Le informazioni tecniche non
-permettono di dedurre il prodotto acquistato o le date commerciali.
+Il nome tecnico GravityZone è in sola lettura. **Prodotto aziendale** viene
+letto dalla licenza aziendale GravityZone e mostrato in sola lettura nella
+tabella e nella modale; per un PC manuale usa l’azienda selezionata, per uno
+importato l’azienda rilevata, anche se diversa da quella locale. Se il campo
+non è restituito, compare **Non fornito dall’API**. Non si deducono il prodotto
+commerciale del singolo PC o le sue date dai moduli tecnici.
+Eventuali prodotti commerciali annotati prima di questa modifica rimangono
+visibili come **Prodotto commerciale salvato** nella modale e conservati negli
+snapshot e nei trasferimenti; non sono sostituiti dal prodotto aziendale.
+Il campo **Descrizione commerciale** è stato rimosso dalla creazione e modifica
+su richiesta del committente. I valori già salvati non vengono cancellati:
+restano conservati nei dati commerciali e negli snapshot automatici.
 
 Un import crea automaticamente il computer con date vuote, **Da completare**.
 Gli aggiornamenti tecnici usano l’ID remoto e conservano ogni dato commerciale.
@@ -58,9 +68,12 @@ arrotondamento implicito. Il salvataggio usa centesimi interi, non float.
 Dal menu della riga, **Trasferisci licenza al sostitutivo** richiede un periodo
 completo sul computer originale e un altro computer della stessa azienda senza
 dati commerciali da sovrascrivere. Passano al sostituto attivazione, scadenza,
-prodotto, prezzo, descrizione commerciale e riferimenti fattura/preventivo.
+eventuale prodotto commerciale già salvato, prezzo, descrizione commerciale
+e riferimenti fattura/preventivo. Il prodotto aziendale da API segue invece
+l’azienda rilevata di ciascun computer e non viene trasferito.
 Quei campi vengono svuotati sul computer originale, evitando due copie della
 stessa licenza. Nome, riferimenti tecnici e note restano propri di ciascun PC.
+Il selettore mostra solo sostituti senza dati commerciali da sovrascrivere.
 Lo storico precedente non viene eliminato. La presenza di sole note sul
 sostituto non impedisce il passaggio e le note sono conservate.
 
@@ -75,6 +88,8 @@ L’operatore verifica l’ID GravityZone; il nome da solo non prova l’identit
 La rilevazione deve essere ancora presente, appartenere alla stessa azienda
 locale/remota e non contenere dati commerciali, nome locale, note o storico.
 In caso contrario l’operazione viene rifiutata per evitare perdita di dati.
+Il selettore esclude già le rilevazioni incompatibili; il salvataggio ricontrolla
+i vincoli nel caso siano cambiate dopo l’apertura della modale.
 
 La transazione conserva il PC manuale e tutti i suoi dati locali, acquisisce
 il riferimento e i campi tecnici remoti e rimuove soltanto la riga locale
@@ -88,7 +103,8 @@ commerciali quando vengono modificati, oltre a trasferimenti e riconciliazioni.
 La prima compilazione da valori commerciali vuoti non produce uno snapshot
 vuoto; cambiare soltanto nome o note non aggiunge storico commerciale.
 Per i passaggi sono conservati anche ID e nome del computer correlato al momento
-dell’azione. Lo storico è consultabile nella stessa modale, senza un registro
+dell’azione. Lo storico, compresa la descrizione commerciale precedente,
+è consultabile nella stessa modale, senza un registro
 operativo o nuove entità da gestire.
 
 `commercial_version` cambia quando mutano i dati locali. La pagina conserva
@@ -101,8 +117,9 @@ non cambia la versione commerciale e non aggiunge snapshot.
 
 Non sono implementati modifica massiva delle date, import commerciale iniziale,
 CRM, cataloghi, magazzino licenze, pro-rata, proposte, PDF, email o risposte
-pubbliche. La modifica su più PC era facoltativa nella #26. Le issue #10–#15 e
-#17 restano sospese fino al riesame del committente; la #16 resta chiusa.
+pubbliche. La modifica su più PC era facoltativa nella #26. Le issue #10–#15
+restano sospese fino al riesame del committente; la #17 riguarda soltanto
+il collaudo e la rifinitura UI/UX di questo flusso in sviluppo. La #16 resta chiusa.
 
 Lo schema di sviluppo può essere ricreato senza backup solo dopo aver verificato
 che la connessione effettiva punti al database locale autorizzato. Non è prevista

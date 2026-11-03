@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Integrations\GravityZone\CompanySynchronizer;
 use App\Models\Company;
+use App\Models\Computer;
 use App\Models\GravityZoneSetting;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -86,6 +87,30 @@ class CompanySynchronizationTest extends TestCase
         $this->assertTrue($company->refresh()->is_present);
         $this->assertSame('Da conservare', $company->notes);
         $this->assertSame('Azienda rinominata', $company->name);
+    }
+
+    public function test_company_product_refreshes_without_changing_local_commercial_data_and_clears_when_no_longer_provided(): void
+    {
+        $companies = [['id' => 'company-1', 'name' => 'Azienda esempio']];
+        $this->fakeCompanies($companies, ['subscriptionType' => 3, 'assignedProductType' => 0, 'assignedProtectionModel' => 'mspSecure']);
+        $sync = app(CompanySynchronizer::class);
+        $sync->sync();
+        $company = Company::sole();
+        $pc = Computer::create(['company_id' => $company->id, 'name' => 'PC locale']);
+        $pc->updateCommercial(['product' => 'Annotazione locale', 'activated_on' => '2026-04-20', 'expires_on' => '2027-04-20'], 0);
+        $pc->updateCommercial(['notes' => 'Nota conservata', 'expires_on' => '2027-04-21'], 1);
+        $before = $pc->getAttributes();
+        $this->assertSame('Endpoint Security · MSP Secure', $company->technical_product);
+
+        $this->fakeCompanies($companies, ['subscriptionType' => 3, 'assignedProductType' => 3]);
+        $sync->sync();
+        $this->assertSame('Bitdefender EDR', $company->refresh()->technical_product);
+        $this->assertSame($before, $pc->refresh()->getAttributes());
+
+        $this->fakeCompanies($companies);
+        $sync->sync();
+        $this->assertNull($company->refresh()->technical_product);
+        $this->assertSame($before, $pc->refresh()->getAttributes());
     }
 
     public function test_network_failure_preserves_the_complete_last_import_and_records_a_safe_error(): void

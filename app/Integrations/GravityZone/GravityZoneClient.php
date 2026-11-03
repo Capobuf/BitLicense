@@ -9,6 +9,7 @@ use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Sleep;
 use JsonException;
@@ -19,6 +20,8 @@ class GravityZoneClient
     public const READ_ONLY_METHODS = ['getCompaniesList', 'getLicenseInfo', 'getNetworkInventoryItems'];
 
     private const REQUEST_ID = '103d7b05-ec02-481b-9ed6-c07b97de2b7a';
+
+    private const RETRY_AT_CACHE_KEY = 'gravityzone-retry-at';
 
     /** @return list<array{id: string, name: string}> */
     public function getCompaniesList(GravityZoneSetting $settings): array
@@ -58,7 +61,7 @@ class GravityZoneClient
         return $companies;
     }
 
-    /** @return array{technical_license_type: string, technical_expires_on: ?string} */
+    /** @return array{technical_license_type: string, technical_expires_on: ?string, technical_product: ?string} */
     public function getLicenseInfo(GravityZoneSetting $settings, string $companyId): array
     {
         if (trim($companyId) === '' || mb_strlen($companyId) > 255) {
@@ -80,6 +83,35 @@ class GravityZoneClient
 
         if (! $license instanceof stdClass || ! is_int($license->subscriptionType ?? null)) {
             throw new GravityZoneException('La risposta GravityZone non contiene dati di licenza aziendale validi.');
+        }
+
+        $productType = $license->assignedProductType ?? null;
+        $protectionModel = $license->assignedProtectionModel ?? null;
+
+        if (($productType !== null && ! is_int($productType)) ||
+            ($protectionModel !== null && ! is_string($protectionModel))) {
+            throw new GravityZoneException('La risposta GravityZone contiene un prodotto aziendale non valido.');
+        }
+
+        $product = match ($productType) {
+            0 => 'Endpoint Security',
+            3 => 'Bitdefender EDR',
+            5 => 'Bitdefender PHASR',
+            default => null,
+        };
+
+        if ($productType === 0 && $license->subscriptionType === 3) {
+            $model = match ($protectionModel) {
+                'aLaCarte' => 'À la carte',
+                'mspSecureEssentials' => 'MSP Secure Essentials',
+                'mspSecure' => 'MSP Secure',
+                'mspSecurePlus' => 'MSP Secure Plus',
+                'mspSecureExtra' => 'MSP Secure Extra',
+                default => null,
+            };
+            if ($model !== null) {
+                $product .= ' · '.$model;
+            }
         }
 
         $expiry = $license->expiryDate ?? null;
@@ -107,6 +139,7 @@ class GravityZoneClient
                 default => 'Codice '.$license->subscriptionType,
             },
             'technical_expires_on' => $expiry,
+            'technical_product' => $product,
         ];
     }
 
@@ -217,6 +250,12 @@ class GravityZoneClient
 
     private function connection(GravityZoneSetting $settings): PendingRequest
     {
+        $seconds = max(0, Cache::get(self::RETRY_AT_CACHE_KEY, 0) - now()->getTimestamp());
+
+        if ($seconds > 0) {
+            throw new GravityZoneException("Limite richieste GravityZone raggiunto. Riprova tra {$seconds} secondi.", stopSynchronization: true);
+        }
+
         try {
             $key = $settings->api_key;
         } catch (DecryptException) {
@@ -254,9 +293,13 @@ class GravityZoneClient
                     : null;
             }
 
-            throw new GravityZoneException($seconds === null
-                ? 'Limite richieste GravityZone raggiunto. Attendi prima di riprovare.'
-                : "Limite richieste GravityZone raggiunto. Riprova tra {$seconds} secondi.", stopSynchronization: true);
+            // Without usable Retry-After, wait one minute before allowing a manual retry.
+            $seconds ??= 60;
+            if ($seconds > 0) {
+                Cache::put(self::RETRY_AT_CACHE_KEY, now()->getTimestamp() + $seconds, $seconds);
+            }
+
+            throw new GravityZoneException("Limite richieste GravityZone raggiunto. Riprova tra {$seconds} secondi.", stopSynchronization: true);
         }
 
         if (in_array($response->status(), [401, 403], true)) {

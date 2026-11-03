@@ -23,7 +23,7 @@
         <h2 class="fi-ta-header-heading">I computer della tua azienda</h2>
     @endif
     @if (! $settings)
-        <p class="fi-ta-header-description">GravityZone non configurato. Un amministratore può configurarlo da Integrazione GravityZone.</p>
+        <p class="fi-ta-header-description">GravityZone non configurato. Un amministratore può configurarlo da Impostazioni → API.</p>
     @else
         <p class="fi-ta-header-description">Ultima sincronizzazione completa dei computer: {{ $settings->endpoints_synced_at?->format('d/m/Y H:i') ?? 'mai' }}.</p>
         @foreach (array_filter([$settings->companies_sync_error, $settings->endpoints_sync_error]) as $error)

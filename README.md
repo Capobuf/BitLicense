@@ -5,8 +5,9 @@ clicchi un computer, modifichi le date e salvi. La scadenza tecnica aziendale
 GravityZone resta distinta dalla scadenza commerciale locale di ogni PC.
 
 L’issue #26 sostituisce il precedente flusso a quattro entità con **Azienda +
-Computer** e una sola vista **Licenze**. Le issue #10–#15 e #17 sono sospese:
-il loro perimetro va riesaminato con il committente dopo la semplificazione.
+Computer** e una sola vista **Licenze**. La #17 è approvata per il collaudo e
+la rifinitura UI/UX di questo flusso in sviluppo. Le issue #10–#15 restano
+sospese: il loro perimetro va riesaminato con il committente.
 La #16 resta chiusa; nessun rilascio in produzione è previsto.
 
 ## Ambiente di sviluppo
@@ -45,7 +46,7 @@ Sostituire l'indirizzo di esempio con quello inserito durante `make:filament-use
 inserire la password al prompt, senza passarla come argomento di shell.
 Il comando di bootstrap promuove solo un account attivo esistente e funziona
 finché non esiste un amministratore attivo. Gli account nascono come operatori.
-L'amministratore crea, modifica e disabilita gli altri utenti dalla voce **Utenti**;
+L'amministratore crea, modifica e disabilita gli altri utenti da **Impostazioni → Utenti**;
 le password iniziali sono impostate manualmente, senza email d'invito.
 Ogni utente può aggiornare i propri dati e password dal profilo personale.
 Il proprio ruolo e stato non sono modificabili dal pannello, per evitare di
@@ -64,7 +65,7 @@ GravityZone o SMTP prima che sia disponibile il relativo pannello protetto.
 
 ### Configurazione GravityZone
 
-Accedere come amministratore e aprire **Integrazione GravityZone**
+Accedere come amministratore e aprire **Impostazioni → API**
 (`/admin/gravityzone`). Inserire l'URL base API della propria console,
 fino a `/api`, e la chiave nel campo protetto; premere **Salva configurazione**.
 Il salvataggio non effettua richieste API. La chiave è cifrata a riposo,
@@ -83,14 +84,17 @@ documentali, con i limiti descritti in [docs/gravityzone-api.md](docs/gravityzon
 
 Dopo il login si apre **Licenze** (`/admin`). Il selettore ricercabile permette
 di scegliere un’azienda; la stessa tabella mostra il riepilogo della sua licenza
-tecnica GravityZone e i computer con prodotto, attivazione, scadenza commerciale
+tecnica GravityZone e i computer con prodotto aziendale da API, attivazione, scadenza commerciale
 e stato. Il riepilogo tecnico resta separato dalle date locali delle righe PC.
 
 Un nuovo computer GravityZone compare automaticamente come **Da completare**.
-Cliccando la riga si apre una sola modale: il nome tecnico è in sola lettura;
-prodotto, date, descrizione, prezzo, riferimenti fattura/preventivo e note sono
+Cliccando la riga si apre una sola modale: nome tecnico e prodotto aziendale
+sono in sola lettura; date, prezzo, riferimenti fattura/preventivo e note sono
 modificabili e facoltativi. **Salva** aggiorna direttamente quel computer.
 Non occorre creare postazioni, prodotti di catalogo o coperture separate.
+Il prodotto viene aggiornato dalla lettura della licenza aziendale già prevista;
+se GravityZone non lo espone, compare **Non fornito dall’API**. Eventuali
+annotazioni prodotto precedenti restano conservate e visibili nella modale.
 
 **Aggiungi PC manuale** opera nella stessa pagina e richiede soltanto il nome.
 L’azienda è quella selezionata. Il menu contestuale della riga consente di
@@ -135,6 +139,9 @@ php artisan schedule:list
 I comandi restituiscono un codice di errore se il rispettivo import non è
 completo. Un lock condiviso impedisce sovrapposizioni fra import aziende e
 computer; dopo un’interruzione anomala può restare occupato fino a un’ora.
+Licenze e inventario sono letti con pause di almeno 250 ms. Un 429 interrompe
+l’import e applica un’attesa condivisa anche a nuovi clic e comandi, secondo
+`Retry-After` (60 secondi se assente/non valido), senza retry automatici.
 Le pianificazioni native restano alle 03:00 per le aziende e alle 04:00 per
 l’inventario, nel fuso Europe/Rome. Nessun Cron viene installato automaticamente.
 
@@ -179,6 +186,9 @@ I test con fixture non costituiscono un nuovo collaudo live del refactor #26.
 Le migrazioni e la navigazione vanno verificate
 anche sul database MySQL/MariaDB di sviluppo; SQLite non sostituisce il collaudo
 del database destinato all'applicazione.
+
+Esiti, anteprime e limiti della verifica #17 sono riepilogati in
+[docs/development-check.md](docs/development-check.md).
 
 Lo sviluppo segue `AGENTS.md` e le issue GitHub. La distribuzione in produzione
 è esclusa da questa fase.
