@@ -34,7 +34,10 @@ class AdminPanelProvider extends PanelProvider
             ->colors([
                 'primary' => Color::Indigo,
             ])
-            ->assets([Css::make('bitlicense', asset('css/bitlicense.css'))])
+            ->assets([
+                Css::make('bitlicense', asset('css/bitlicense.css')),
+                Css::make('dashboard', asset('css/dashboard.css').'?v='.filemtime(public_path('css/dashboard.css'))),
+            ])
             ->discoverClusters(in: app_path('Filament/Clusters'), for: 'App\Filament\Clusters')
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\Filament\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\Filament\Pages')

@@ -5,8 +5,9 @@ clicchi un computer, modifichi le date e salvi. La scadenza tecnica aziendale
 GravityZone resta distinta dalla scadenza commerciale locale di ogni PC.
 
 L’issue #26 sostituisce il precedente flusso a quattro entità con **Azienda +
-Computer** e una sola vista **Licenze**. La #17 è approvata per il collaudo e
-la rifinitura UI/UX di questo flusso in sviluppo. Le issue #10–#15 restano
+Computer** e una sola vista operativa **Licenze**. Le #26 e #17 sono integrate;
+la #30 aggiunge la **Dashboard** separata richiesta dal committente, in Blade.
+Le issue #10–#15 restano
 sospese: il loro perimetro va riesaminato con il committente.
 La #16 resta chiusa; nessun rilascio in produzione è previsto.
 
@@ -117,7 +118,36 @@ Lo stato e i filtri distinguono **Da completare**, **Scaduta**, **In scadenza**
 entro 30 giorni, **Attiva** e **Da attivare**. La scadenza odierna è ancora
 valida. Il caricamento della pagina e i filtri leggono soltanto il database
 locale: non inviano email, non sincronizzano e non creano notifiche duplicate.
-Non esistono dashboard, scadenzari o archivi commerciali paralleli.
+Non esistono scadenzari o archivi commerciali paralleli.
+
+### Dashboard
+
+La voce **Dashboard** (`/admin/dashboard`) offre una panoramica in sola lettura
+ad amministratori e operatori attivi. La hero usa glow e animazione CSS,
+disattivata con la preferenza di sistema per il movimento ridotto, senza pulsante pausa.
+Statistiche, sezioni e badge usano i componenti nativi Filament; fuori dalla hero
+la dashboard segue la palette del pannello, anche per i grafici.
+Non richiede build frontend, librerie grafiche o chiamate esterne.
+
+Il selettore **Periodo scadenze** offre 30, 60, 90 giorni, 6 mesi e 1 anno:
+oggi e il giorno finale sono inclusi; mesi e anni sono di calendario, senza
+oltrepassare l’ultimo giorno del mese quando manca il giorno corrispondente.
+I contatori aziendali e l’elenco paginato usano la **scadenza tecnica GravityZone**.
+Puoi cercare per nome e mostrare aziende scadute, in scadenza nel periodo,
+entrambe oppure tutte (anche con data sconosciuta). La ricerca riguarda l’elenco;
+contatori e grafici restano globali. I record non più rilevati restano segnalati.
+I contatori aziendali aprono l’elenco filtrato; il clic sull’azienda apre Licenze
+con quella selezione (`/admin?company=ID`). Il totale computer apre tutte le aziende.
+
+I grafici descrivono invece i **computer e le date commerciali locali**.
+Cliccando uno stato si apre Licenze con quel filtro: «In scadenza» mantiene la
+definizione operativa a 30 giorni, indipendentemente dal periodo scelto.
+Il grafico mensile usa il periodo selezionato e include le scadenze note anche
+senza attivazione; questi PC restano «Da completare» nel grafico degli stati.
+Ogni barra apre Licenze con le date del mese limitate al periodo scelto.
+Le tabelle mostrano il filtro applicato, modificabile o rimovibile da Filament.
+Non sono proiezioni di rinnovo. Date e limiti usano Europe/Rome.
+L’apertura non sincronizza, invia email o modifica dati.
 
 ### Sincronizzazione in sola lettura
 

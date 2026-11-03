@@ -35,6 +35,7 @@ use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Columns\ViewColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
+use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
@@ -75,6 +76,23 @@ class Licenze extends Dashboard implements HasTable
     {
         abort_unless(static::canAccess(), 403);
         $this->form->fill();
+        $companyId = filter_var(request()->query('company'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if ($companyId && Company::whereKey($companyId)->exists()) {
+            $this->data['company_id'] = $companyId;
+        } elseif (request()->query('company') === 'all') {
+            $this->data['company_id'] = 'all';
+        }
+        $status = request()->query('status');
+        if (in_array($status, ['missing', 'expired', 'expiring', 'active', 'future'], true)) {
+            $this->tableFilters['status'] = ['value' => $status];
+        }
+        $dates = request()->only(['expires_from', 'expires_until']);
+        if (validator($dates, [
+            'expires_from' => ['required', 'date_format:Y-m-d'],
+            'expires_until' => ['required', 'date_format:Y-m-d', 'after_or_equal:expires_from'],
+        ])->passes()) {
+            $this->tableFilters['expiry'] = ['from' => $dates['expires_from'], 'until' => $dates['expires_until']];
+        }
     }
 
     public function content(Schema $schema): Schema
@@ -112,7 +130,7 @@ class Licenze extends Dashboard implements HasTable
             ->header(function () {
                 $company = Company::find($this->selectedCompanyId());
                 $counts = $company === null ? collect() : Computer::query()->where('company_id', $company->id)
-                    ->get(['activated_on', 'expires_on'])->countBy(fn (Computer $computer): string => self::status($computer));
+                    ->get(['activated_on', 'expires_on'])->countBy(fn (Computer $computer): string => $computer->commercialStatus());
 
                 return view('filament.licenses-company', [
                     'company' => $company,
@@ -133,7 +151,7 @@ class Licenze extends Dashboard implements HasTable
             ->columnManagerTriggerAction(fn (Action $action): Action => $action->label('Colonne')->iconButton()->tooltip('Colonne'))
             ->columns([
                 TextColumn::make('display_name')->label('Computer')->weight('medium')->wrap()->toggleable()->searchable(['technical_name', 'name'])
-                    ->description(fn (Computer $record): string => self::status($record).' · '.($record->gravityzone_id === null ? 'Manuale' : ($record->gravityzone_company_id !== $record->company_id
+                    ->description(fn (Computer $record): string => $record->commercialStatus().' · '.($record->gravityzone_id === null ? 'Manuale' : ($record->gravityzone_company_id !== $record->company_id
                         ? 'Da verificare: rilevato in '.$record->gravityzoneCompany?->name
                         : ($record->is_present ? 'GravityZone' : 'Non più rilevato · dati conservati')))),
                 ViewColumn::make('validity')->label('Validità')->view('filament.computer-validity')
@@ -168,6 +186,30 @@ class Licenze extends Dashboard implements HasTable
                         default => $query,
                     };
                 }),
+                Filter::make('expiry')->label('Scadenza commerciale')->schema([
+                    TextInput::make('from')->label('Scadenza dal')->type('date')->rules(['nullable', 'date_format:Y-m-d']),
+                    TextInput::make('until')->label('Scadenza al')->type('date')->rules(['nullable', 'date_format:Y-m-d'])
+                        ->afterOrEqual(fn (Get $get): ?string => filled($get('from')) ? 'from' : null),
+                ])->query(function (Builder $query, array $data): Builder {
+                    if (validator($data, [
+                        'from' => ['nullable', 'date_format:Y-m-d'],
+                        'until' => ['nullable', 'date_format:Y-m-d', ...(! empty($data['from']) ? ['after_or_equal:from'] : [])],
+                    ])->fails()) {
+                        return $query->whereRaw('1 = 0');
+                    }
+
+                    return $query->when(filled($data['from'] ?? null), fn (Builder $query): Builder => $query->whereDate('expires_on', '>=', $data['from']))
+                        ->when(filled($data['until'] ?? null), fn (Builder $query): Builder => $query->whereDate('expires_on', '<=', $data['until']));
+                })->indicateUsing(function (array $data): array {
+                    $indicators = [];
+                    foreach (['from' => 'Scadenza dal ', 'until' => 'Scadenza al '] as $key => $label) {
+                        if (filled($data[$key] ?? null) && validator([$key => $data[$key]], [$key => 'date_format:Y-m-d'])->passes()) {
+                            $indicators[] = $label.CarbonImmutable::parse($data[$key])->format('d/m/Y');
+                        }
+                    }
+
+                    return $indicators;
+                }),
             ])
             ->recordActions([
                 $this->editAction(),
@@ -175,19 +217,6 @@ class Licenze extends Dashboard implements HasTable
             ])
             ->emptyStateHeading(fn (): string => empty($this->data['company_id']) ? 'Scegli un’azienda per vedere i computer' : 'Nessun computer da mostrare')
             ->emptyStateDescription('I computer importati compaiono automaticamente. Puoi anche aggiungere un PC manuale.');
-    }
-
-    private static function status(Computer $computer): string
-    {
-        $day = today('Europe/Rome');
-
-        return match (true) {
-            $computer->activated_on === null || $computer->expires_on === null => 'Da completare',
-            $computer->expires_on->lt($day) => 'Scaduta',
-            $computer->activated_on->gt($day) => 'Da attivare',
-            $computer->expires_on->lte($day->addDays(30)) => 'In scadenza',
-            default => 'Attiva',
-        };
     }
 
     #[Computed]

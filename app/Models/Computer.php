@@ -63,6 +63,19 @@ class Computer extends Model
         return $this->belongsTo(Company::class, 'gravityzone_company_id');
     }
 
+    public function commercialStatus(): string
+    {
+        $day = today('Europe/Rome');
+
+        return match (true) {
+            $this->activated_on === null || $this->expires_on === null => 'Da completare',
+            $this->expires_on->lt($day) => 'Scaduta',
+            $this->activated_on->gt($day) => 'Da attivare',
+            $this->expires_on->lte($day->addDays(30)) => 'In scadenza',
+            default => 'Attiva',
+        };
+    }
+
     public function updateCommercial(array $data, int $expectedVersion): void
     {
         DB::transaction(function () use ($data, $expectedVersion): void {
