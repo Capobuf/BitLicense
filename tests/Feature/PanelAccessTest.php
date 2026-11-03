@@ -95,7 +95,7 @@ class PanelAccessTest extends TestCase
         }
         $labels = collect(Filament::getNavigation())->flatMap(fn ($group) => $group->getItems())
             ->map(fn ($item) => $item->getLabel())->values()->all();
-        $this->assertSame(['Licenze', 'Impostazioni'], $labels);
+        $this->assertSame(['Dashboard', 'Licenze', 'Impostazioni'], $labels);
         Http::assertNothingSent();
     }
 

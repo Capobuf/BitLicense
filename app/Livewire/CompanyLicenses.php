@@ -16,10 +16,13 @@ class CompanyLicenses extends Licenze
     #[Locked]
     public ?array $data = [];
 
-    public function mount(?int $companyId = null): void
+    public function mount(?int $companyId = null, array $filters = []): void
     {
         parent::mount();
         $this->data = ['company_id' => Company::findOrFail($companyId)->id];
+        if ($filters !== []) {
+            $this->tableFilters = $filters;
+        }
     }
 
     public function table(Table $table): Table
