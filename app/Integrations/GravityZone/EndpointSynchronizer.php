@@ -103,6 +103,7 @@ class EndpointSynchronizer
                 $ids = array_column($items, 'id');
                 $seenAt = now();
                 DB::transaction(function () use ($items, $ids, $company, $seenAt): void {
+                    Company::query()->whereKey($company->id)->lockForUpdate()->firstOrFail();
                     $rows = array_map(fn (array $item): array => [
                         'gravityzone_id' => $item['id'],
                         'company_id' => $company->id,
@@ -121,9 +122,62 @@ class EndpointSynchronizer
                         ]);
                     }
 
+                    $firstSeen = array_column($items, 'first_seen_on', 'id');
+                    $computers = Computer::query()->whereIn('gravityzone_id', array_keys(array_filter($firstSeen)))
+                        ->whereNull('first_seen_on')->orderBy('id')->lockForUpdate()->get();
+                    foreach ($computers as $computer) {
+                        $date = $firstSeen[$computer->gravityzone_id];
+                        // Initialize once; never restore a date intentionally cleared or transferred out.
+                        if ($computer->canInitializeActivationFromFirstSeen($date)) {
+                            $computer->updateCommercial(['activated_on' => $date], $computer->commercial_version);
+                            $computer->activation_from_first_seen = true;
+                        }
+                        $computer->first_seen_on = $date;
+                        $computer->save();
+                    }
+
                     Computer::query()->where('gravityzone_company_id', $company->id)->whereNotIn('gravityzone_id', $ids)->update(['is_present' => false]);
-                    $company->forceFill(['endpoints_synced_at' => $seenAt, 'endpoints_sync_error' => null])->save();
                 });
+
+                foreach (Company::whereIn('id', Computer::whereIn('gravityzone_id', $ids)->select('company_id'))->get() as $localCompany) {
+                    $localCompany->initializeDetectedSales();
+                }
+
+                $licenseFailures = 0;
+                $licenseError = null;
+                foreach ($items as $item) {
+                    $computer = Computer::query()->where('gravityzone_id', $item['id']);
+
+                    if ($item['is_managed'] !== true) {
+                        $computer->update(['gravityzone_license_status' => null, 'license_checked_at' => null, 'license_sync_error' => null]);
+
+                        continue;
+                    }
+
+                    try {
+                        if ($interruptedBy !== null) {
+                            throw new GravityZoneException($interruptedBy);
+                        }
+
+                        $status = app(GravityZoneClient::class)->getManagedEndpointDetails($settings, $item['id'], $company->gravityzone_id);
+                        $computer->update(['gravityzone_license_status' => $status, 'license_checked_at' => now(), 'license_sync_error' => null]);
+                    } catch (GravityZoneException $exception) {
+                        $computer->update(['license_sync_error' => $exception->getMessage()]);
+                        $licenseFailures++;
+                        $licenseError ??= $exception->getMessage();
+
+                        if ($exception->stopSynchronization) {
+                            $interruptedBy = $exception->getMessage();
+                        }
+                    }
+                }
+
+                $error = $licenseFailures > 0 ? "Stato licenza non aggiornato per {$licenseFailures} computer. {$licenseError}" : null;
+                $company->forceFill(['endpoints_synced_at' => $seenAt, 'endpoints_sync_error' => $error])->save();
+                if ($error !== null) {
+                    $failures++;
+                    $firstError ??= $error;
+                }
                 $count += count($items);
             }
 

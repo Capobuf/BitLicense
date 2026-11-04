@@ -17,7 +17,7 @@ use stdClass;
 
 class GravityZoneClient
 {
-    public const READ_ONLY_METHODS = ['getCompaniesList', 'getCompanyDetails', 'getLicenseInfo', 'getNetworkInventoryItems'];
+    public const READ_ONLY_METHODS = ['getCompaniesList', 'getCompanyDetails', 'getLicenseInfo', 'getNetworkInventoryItems', 'getManagedEndpointDetails'];
 
     private const REQUEST_ID = '103d7b05-ec02-481b-9ed6-c07b97de2b7a';
 
@@ -185,7 +185,7 @@ class GravityZoneClient
         ];
     }
 
-    /** @return list<array{id: string, name: string, platform: ?string, is_managed: ?bool, is_isolated: ?bool}> */
+    /** @return list<array{id: string, name: string, platform: ?string, is_managed: ?bool, is_isolated: ?bool, first_seen_on: ?string}> */
     public function getNetworkInventoryItems(GravityZoneSetting $settings, string $companyId, array $otherCompanyIds = []): array
     {
         if (trim($companyId) === '' || mb_strlen($companyId) > 255) {
@@ -221,11 +221,26 @@ class GravityZoneClient
                 $platform = $details->operatingSystemVersion ?? null;
                 $managed = $details->isManaged ?? null;
                 $isolated = $details->isIsolated ?? null;
+                $firstSeen = $details->firstSeen ?? null;
+                if ($firstSeen === '') {
+                    $firstSeen = null;
+                }
 
                 if (($platform !== null && ! is_string($platform)) ||
                     ($managed !== null && ! is_bool($managed)) ||
                     ($isolated !== null && ! is_bool($isolated))) {
                     throw new GravityZoneException('La risposta GravityZone contiene dettagli endpoint non validi.');
+                }
+
+                if ($firstSeen !== null) {
+                    $format = 'Y-m-d\TH:i:s';
+                    $date = is_string($firstSeen) && preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/D', $firstSeen)
+                        ? DateTimeImmutable::createFromFormat('!'.$format, $firstSeen, new DateTimeZone('UTC')) : false;
+                    if (! $date || DateTimeImmutable::getLastErrors() !== false || $date->format($format) !== $firstSeen) {
+                        throw new GravityZoneException('La risposta GravityZone contiene una data di primo rilevamento non valida.');
+                    }
+                    // The documented timestamp has no timezone: preserve its calendar date.
+                    $firstSeen = $date->format('Y-m-d');
                 }
 
                 // Company and AD queries may deliberately return the same endpoint.
@@ -235,11 +250,52 @@ class GravityZoneClient
                     'platform' => is_string($platform) && trim($platform) !== '' ? $platform : null,
                     'is_managed' => $managed,
                     'is_isolated' => $isolated,
+                    'first_seen_on' => $firstSeen,
                 ];
             }
         }
 
         return array_values($endpoints);
+    }
+
+    public function getManagedEndpointDetails(GravityZoneSetting $settings, string $endpointId, string $companyId): ?int
+    {
+        if (trim($endpointId) === '' || mb_strlen($endpointId) > 255) {
+            throw new GravityZoneException('ID endpoint GravityZone non valido.');
+        }
+
+        if (trim($companyId) === '' || mb_strlen($companyId) > 255) {
+            throw new GravityZoneException('ID azienda GravityZone non valido.');
+        }
+
+        try {
+            $connection = $this->connection($settings);
+            Sleep::for(250)->milliseconds();
+            $response = $connection->post('/v1.0/jsonrpc/network', [
+                'jsonrpc' => '2.0',
+                'id' => self::REQUEST_ID,
+                'method' => 'getManagedEndpointDetails',
+                'params' => ['endpointId' => $endpointId],
+            ]);
+        } catch (ConnectionException) {
+            throw new GravityZoneException('Impossibile contattare GravityZone: errore di rete o tempo di attesa scaduto. Riprova più tardi.', stopSynchronization: true);
+        }
+
+        $endpoint = $this->responsePayload($response)->result ?? null;
+
+        if (! $endpoint instanceof stdClass || ($endpoint->id ?? null) !== $endpointId ||
+            ($endpoint->companyId ?? null) !== $companyId ||
+            (isset($endpoint->agent) && ! $endpoint->agent instanceof stdClass)) {
+            throw new GravityZoneException('La risposta GravityZone non contiene dettagli validi per l’endpoint e l’azienda richiesti.');
+        }
+
+        $licensed = $endpoint->agent->licensed ?? null;
+
+        if ($licensed !== null && ! is_int($licensed)) {
+            throw new GravityZoneException('La risposta GravityZone contiene uno stato licenza endpoint non valido.');
+        }
+
+        return in_array($licensed, [0, 1, 2, 6], true) ? $licensed : null;
     }
 
     /** @return iterable<stdClass> */

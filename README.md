@@ -7,8 +7,8 @@ GravityZone resta distinta dalla scadenza commerciale locale di ogni PC.
 L’issue #26 sostituisce il precedente flusso a quattro entità con **Azienda +
 Computer** e una sola vista operativa **Licenze**. Le #26 e #17 sono integrate;
 la #30 aggiunge la **Dashboard** separata richiesta dal committente, in Blade.
-Le issue #10–#15 restano
-sospese: il loro perimetro va riesaminato con il committente.
+La #10, nel perimetro approvato il 04/11/2026, collega vendite, rinnovi e upgrade
+ai periodi dei computer. Le #11–#15 restano sospese.
 La #16 resta chiusa; nessun rilascio in produzione è previsto.
 
 ## Ambiente di sviluppo
@@ -98,11 +98,20 @@ aziendale. Svuotandolo si torna a tutte le licenze, anche quelle sconosciute.
 
 Un nuovo computer GravityZone compare automaticamente come **Da completare**.
 La matita o il clic sulla riga apre la modale di modifica, senza espansioni. Nome tecnico e prodotto aziendale
-sono in sola lettura; date, prezzo, riferimenti fattura/preventivo e note sono
-modificabili e facoltativi. **Salva** aggiorna direttamente quel computer.
+sono in sola lettura. Per i computer ancora non associati, date e dati commerciali
+sono facoltativi e modificabili. Per quelli collegati, il ciclo mostra vendita,
+rinnovi e upgrade: date e riferimenti si correggono nell’operazione
+tramite **Vendite e rinnovi**; nome manuale e note restano modificabili sul PC.
 La colonna **Licenza** mostra sempre il prodotto aziendale GravityZone per
 ogni PC, anche nelle tabelle di **Tutte le Aziende**; se manca, compare
 **Non fornito dall’API**. Il tooltip chiarisce che è la licenza aziendale.
+La colonna **Stato licenza GZ** mostra lo stato tecnico del singolo PC
+(licenza attiva, scaduta, autenticazione in attesa, assente/non applicabile),
+con data dell’ultima lettura e indicazione degli aggiornamenti falliti.
+È disponibile anche nella modale, in sola lettura. Non indica lo stato
+complessivo della protezione e non viene dedotto dalle date commerciali.
+I PC manuali sono **Non collegati**, quelli non gestiti **Non gestiti**;
+dati assenti o codici sconosciuti restano **Non disponibili**.
 La colonna **Validità** mostra attivazione sopra e scadenza sotto. **Prezzo**
 resta visibile; **Rif. Preventivo** e **Rif. Fattura** compaiono solo quando
 almeno un computer dell’azienda ha il rispettivo valore. Le icone di filtri e
@@ -125,7 +134,33 @@ Lo stato e i filtri distinguono **Da completare**, **Scaduta**, **In scadenza**
 entro 30 giorni, **Attiva** e **Da attivare**. La scadenza odierna è ancora
 valida. Il caricamento della pagina e i filtri leggono soltanto il database
 locale: non inviano email, non sincronizzano e non creano notifiche duplicate.
-Non esistono scadenzari o archivi commerciali paralleli.
+Il filtro **Da rinnovare** esclude i computer con un periodo futuro già registrato.
+
+### Vendite e rinnovi
+
+Il primo rilevamento GravityZone identifica la prima vendita: raggruppamento
+per azienda e mese/anno e date individuali conservate.
+L'azione **Sposta PC** riunisce esplicitamente computer di mesi diversi nella
+vendita corretta. Per applicare la regola ai primi rilevamenti già salvati,
+eseguire dopo la migrazione `php artisan bitlicense:detect-sales`; non contatta
+GravityZone ed è ripetibile. Le sincronizzazioni successive applicano la stessa
+regola ai nuovi computer, senza annullare le correzioni manuali.
+
+In **Aziende**, aprire **Vendite e rinnovi**; lo stesso registro è accessibile
+dal nome azienda e dal computer in Licenze. Selezionare i PC, verificare i
+periodi individuali oppure applicare date comuni. I rinnovi possono unire PC
+provenienti da vendite diverse. La licenza è quella già assegnata al PC, mostrata
+in sola lettura: non va inserito alcun prodotto. **Upgrade aziendale** acquisisce
+la licenza assegnata e registra la differenza manuale per i residui, mantenendo
+le scadenze e lo storico delle licenze registrate.
+
+Il registro gestisce periodi, rinnovi e storico delle licenze. Importi e riferimenti
+a fatture o preventivi restano semplici annotazioni: nessuno stato di fatturazione,
+contatore di fatture da emettere o obbligo di inserire un riferimento. Le vecchie
+registrazioni senza computer si completano con **Collega computer**, conservando
+la stessa operazione.
+
+Flusso, correzioni e limiti: [docs/company-renewals.md](docs/company-renewals.md).
 
 ### Dashboard
 
@@ -168,8 +203,14 @@ L’apertura non sincronizza, invia email o modifica dati.
 
 ### Sincronizzazione in sola lettura
 
-**Aggiorna da GravityZone**, riservato agli amministratori con conferma,
-legge prima aziende e licenze tecniche, poi l’inventario computer. Le chiavi
+L’aggiornamento automatico parte ogni giorno alle **03:00 Europe/Rome**,
+legge prima aziende e licenze tecniche, poi l’inventario computer e lo stato licenza di ogni endpoint gestito.
+Le pagine **Licenze** e **Aziende** hanno anche un’icona discreta
+**Aggiorna da GravityZone**, riservata agli amministratori: registra la richiesta
+e ritorna subito, senza modale o chiamate API nella richiesta web. Il Cron
+la prende in carico al minuto successivo; clic ripetuti vengono accorpati.
+La conferma indica che l’aggiornamento è richiesto, non che sia già terminato.
+Dopo qualche minuto ricaricare la pagina per consultare i nuovi dati. Le chiavi
 richiedono i permessi di lettura Network e Licensing. Gli operatori possono
 modificare i dati locali ma non avviare questa lettura né accedere alle credenziali.
 
@@ -191,9 +232,10 @@ questa issue non introduce un CRM o una nuova gestione contatti.
 Gli errori di lettura e gli stati disponibili sono mostrati nel riepilogo
 aziendale. I dati precedenti restano conservati; l’inventario non viene
 applicato parzialmente se una sua pagina fallisce. Lo stesso processo è
-accessibile con i comandi separati:
+accessibile con il comando completo o con i comandi separati:
 
 ```sh
+php artisan bitlicense:sync
 php artisan bitlicense:sync-companies
 php artisan bitlicense:sync-endpoints
 php artisan schedule:list
@@ -202,19 +244,45 @@ php artisan schedule:list
 I comandi restituiscono un codice di errore se il rispettivo import non è
 completo. Un lock condiviso impedisce sovrapposizioni fra import aziende e
 computer; dopo un’interruzione anomala può restare occupato fino a un’ora.
-Licenze e inventario sono letti con pause di almeno 250 ms. Un 429 interrompe
+Licenze, inventario e dettagli endpoint sono letti con pause di almeno 250 ms. Un 429 interrompe
 l’import e applica un’attesa condivisa anche a nuovi clic e comandi, secondo
 `Retry-After` (60 secondi se assente/non valido), senza retry automatici.
-Le pianificazioni native restano alle 03:00 per le aziende e alle 04:00 per
-l’inventario, nel fuso Europe/Rome. Nessun Cron viene installato automaticamente.
+Il Scheduler controlla ogni minuto se sono le 03:00 oppure se esiste una
+richiesta esplicita. Negli altri minuti non contatta GravityZone. Un solo
+aggiornamento completo sostituisce le precedenti pianificazioni separate.
+La richiesta è conservata nella cache database condivisa tra pannello e CLI;
+un lock protegge il ciclo completo, inclusi gli avvii dei comandi separati.
+In caso di errore non parte un ciclo di tentativi ogni minuto: rimangono
+gli errori consultabili in Licenze e nel database, fino a un nuovo avvio
+esplicito o al giro del giorno seguente.
 
 Solo dopo l’autorizzazione ai collegamenti reali, in sviluppo si può usare
 `php artisan schedule:work`, oppure un Cron che esegua ogni minuto
 `php /percorso/BitLicense/artisan schedule:run` come utente dell’applicazione.
-Le letture sono sincrone: per inventari ampi preferire la CLI e verificare i
-limiti di durata PHP. Non servono queue worker, Redis o nuovi servizi.
+Il Cron è necessario anche per i pulsanti: senza di esso le richieste
+restano in attesa. La lettura dello stato aggiunge una richiesta per PC gestito;
+ora l’intero aggiornamento viene eseguito dalla CLI, fuori dalla richiesta web.
+Non servono queue worker, Redis o nuovi servizi. La cache deve essere
+persistente e condivisa (configurazione predefinita: `CACHE_STORE=database`).
 Contratto API, fixture e verifiche storiche sono descritti in
 [docs/gravityzone-api.md](docs/gravityzone-api.md).
+
+**Sviluppo del 04/11/2026:** il Cron locale
+`/etc/cron.d/bitlicense-dev-scheduler` esegue ogni minuto il Scheduler
+nel container di sviluppo `bitlicense-dev-app-1`, già accessibile sulla porta
+8110. Il processo Cron e il container devono essere avviati. L’output è in
+`storage/logs/development-scheduler.log` sull’host; non è un deployment.
+Il primo giro giornaliero successivo all’attivazione è il 05/11/2026 alle 03:00.
+Non è stata forzata una nuova lettura API reale durante questa modifica.
+
+Verifica della rifinitura: `php artisan test --compact` passa con 356 test e
+2.519 asserzioni; `vendor/bin/pint --test` e `git diff --check` passano.
+Browser desktop/mobile: icone accessibili, clic da tastiera, deduplicazione e
+richiesta persistente fra processo web e CLI verificati su SQLite isolato,
+con client/sincronizzatori reali e HTTP simulato; dati commerciali e periodi
+aziendali conservati. Login e presenza delle icone verificati anche sulla
+porta 8110, senza premere l’aggiornamento sui dati reali.
+Il giro notturno reale resta da osservare; push e merge restano da approvare.
 
 ### Aggiornamento dello schema locale per #26
 

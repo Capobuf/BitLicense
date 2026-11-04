@@ -2,14 +2,15 @@
 
 namespace App\Filament\Pages;
 
-use App\Integrations\GravityZone\CompanySynchronizer;
-use App\Integrations\GravityZone\EndpointSynchronizer;
-use App\Integrations\GravityZone\GravityZoneException;
-use App\Livewire\CompanyLicenses;
+use App\Filament\Actions\CompanyRenewalsAction;
+use App\Filament\Actions\SynchronizeGravityZoneAction;
+use App\Livewire\CompanyRenewals;
 use App\Models\Company;
+use App\Models\CompanyRenewal;
 use App\Models\Computer;
 use App\Models\GravityZoneSetting;
 use App\Support\Euro;
+use BackedEnum;
 use Carbon\CarbonImmutable;
 use Closure;
 use Filament\Actions\Action;
@@ -22,8 +23,10 @@ use Filament\Forms\Components\TextInput;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Notifications\Notification;
 use Filament\Pages\Dashboard;
+use Filament\Schemas\Components\Actions;
 use Filament\Schemas\Components\EmbeddedSchema;
 use Filament\Schemas\Components\EmbeddedTable;
+use Filament\Schemas\Components\Livewire;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
@@ -48,6 +51,8 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Locked;
+use Livewire\Attributes\On;
+use Livewire\Attributes\Session;
 
 class Licenze extends Dashboard implements HasTable
 {
@@ -55,9 +60,15 @@ class Licenze extends Dashboard implements HasTable
 
     protected static ?string $title = 'Licenze';
 
-    protected ?string $subheading = 'Scegli l’azienda e clicca un computer per aggiornare le sue date commerciali.';
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedKey;
 
+    protected ?string $subheading = 'Consulta validità e rinnovi dei computer. Apri l’azienda per consultare vendite e storico.';
+
+    #[Session]
     public ?array $data = [];
+
+    #[Locked]
+    public array $navigationFilters = [];
 
     protected bool $showCompanyName = false;
 
@@ -75,12 +86,22 @@ class Licenze extends Dashboard implements HasTable
     public function mount(): void
     {
         abort_unless(static::canAccess(), 403);
-        $this->form->fill();
+        $this->form->fill($this->data);
         $companyId = filter_var(request()->query('company'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
         if ($companyId && Company::whereKey($companyId)->exists()) {
             $this->data['company_id'] = $companyId;
         } elseif (request()->query('company') === 'all') {
             $this->data['company_id'] = 'all';
+        } elseif (request()->has('company')) {
+            $this->data['company_id'] = null;
+        }
+        // Once the selector URL is initialized, restore filters from the session instead of replaying a Dashboard link.
+        if (request()->has('license')) {
+            return;
+        }
+        if (request()->has('company')) {
+            $this->data['license'] = null;
+            $this->tableFilters = ['status' => ['value' => null], 'expiry' => ['from' => null, 'until' => null]];
         }
         $status = request()->query('status');
         if (in_array($status, ['missing', 'expired', 'expiring', 'active', 'future'], true)) {
@@ -93,6 +114,17 @@ class Licenze extends Dashboard implements HasTable
         ])->passes()) {
             $this->tableFilters['expiry'] = ['from' => $dates['expires_from'], 'until' => $dates['expires_until']];
         }
+        if (request()->hasAny(['status', 'expires_from', 'expires_until'])) {
+            $this->navigationFilters = $this->tableFilters ?? [];
+        }
+    }
+
+    protected function queryString(): array
+    {
+        return [
+            'data.company_id' => ['as' => 'company', 'history' => false, 'keep' => true],
+            'data.license' => ['as' => 'license', 'history' => false, 'keep' => true],
+        ];
     }
 
     public function content(Schema $schema): Schema
@@ -116,6 +148,7 @@ class Licenze extends Dashboard implements HasTable
                 ->getSearchResultsUsing(fn (Select $component, string $search): array => array_filter($component->getOptions(),
                     fn (string $label): bool => Str::contains(Str::ascii(html_entity_decode(strip_tags($label), ENT_QUOTES | ENT_HTML5, 'UTF-8')), Str::ascii($search), ignoreCase: true)))
                 ->afterStateUpdated(function (): void {
+                    $this->navigationFilters = [];
                     unset($this->referenceColumns);
                     $this->resetTable();
                     $this->resetTableSearch();
@@ -138,11 +171,11 @@ class Licenze extends Dashboard implements HasTable
 
     public function table(Table $table): Table
     {
-        return $table->query(fn (): Builder => Computer::query()->where('company_id', $this->selectedCompanyId())->with(['company', 'gravityzoneCompany']))
+        return $table->query(fn (): Builder => Computer::query()->where('company_id', $this->selectedCompanyId())->with(['company', 'gravityzoneCompany'])->withCommercialPeriods())
             ->header(function () {
                 $company = Company::find($this->selectedCompanyId());
                 $counts = $company === null ? collect() : Computer::query()->where('company_id', $company->id)
-                    ->get(['activated_on', 'expires_on'])->countBy(fn (Computer $computer): string => $computer->commercialStatus());
+                    ->withCommercialPeriods()->get()->countBy(fn (Computer $computer): string => $computer->commercialStatus());
 
                 return view('filament.licenses-company', [
                     'company' => $company,
@@ -159,23 +192,41 @@ class Licenze extends Dashboard implements HasTable
             ->extraAttributes(['class' => 'bl-computer-table'])
             ->stackedOnMobile()->recordAction('edit')->defaultSort('id', 'desc')
             ->reorderableColumns()
+            ->persistFiltersInSession()
             ->filtersTriggerAction(fn (Action $action): Action => $action->label('Filtri')->iconButton()->tooltip('Filtri'))
             ->columnManagerTriggerAction(fn (Action $action): Action => $action->label('Colonne')->iconButton()->tooltip('Colonne'))
             ->columns([
                 TextColumn::make('display_name')->label('Computer')->weight('medium')->wrap()->toggleable()->searchable(['technical_name', 'name'])
-                    ->description(fn (Computer $record): string => $record->commercialStatus().' · '.($record->gravityzone_id === null ? 'Manuale' : ($record->gravityzone_company_id !== $record->company_id
+                    ->description(fn (Computer $record): ?string => $record->gravityzone_id === null ? null : ($record->gravityzone_company_id !== $record->company_id
                         ? 'Da verificare: rilevato in '.$record->gravityzoneCompany?->name
-                        : ($record->is_present ? 'GravityZone' : 'Non più rilevato · dati conservati')))),
+                        : ($record->is_present ? null : 'Non più rilevato · dati conservati'))),
                 TextColumn::make('company_product')->label('Licenza')->placeholder('Non fornito dall’API')->wrap()
                     ->tooltip('Licenza aziendale GravityZone'),
+                ViewColumn::make('gravityzone_license_status')->label('Stato licenza GZ')->toggleable()->disabledClick()
+                    ->state(fn (Computer $record): string => $record->gravityzoneLicenseDisplay()['label'])
+                    ->view('filament.computer-license-status'),
                 ViewColumn::make('validity')->label('Validità')->view('filament.computer-validity')
-                    ->sortable(query: fn (Builder $query, string $direction): Builder => $query->orderBy('expires_on', $direction))->toggleable(),
-                TextColumn::make('price_cents')->label('Prezzo')->sortable()->placeholder('Non indicato')
+                    ->sortable(query: fn (Builder $query, string $direction): Builder => $query->orderBy(DB::raw(Computer::commercialDateSql('expires_on')), $direction))->toggleable(),
+                TextColumn::make('price_cents')->label('Prezzo PC')->sortable()->placeholder(fn (Computer $record): string => $record->effectivePeriod() === null ? 'Non indicato' : 'Nell’operazione')
+                    ->state(fn (Computer $record): ?int => $record->price_cents)
                     ->formatStateUsing(fn (int $state): string => '€ '.str_replace('.', ',', Euro::fromCents($state))),
                 TextColumn::make('quote_reference')->label('Rif. Preventivo')->wrap()->placeholder('—')
+                    ->state(fn (Computer $record): ?string => $record->effectivePeriod()?->operation->quote_reference ?? $record->quote_reference)
                     ->visible(fn (): bool => $this->referenceColumns['quote_reference']),
                 TextColumn::make('invoice_reference')->label('Rif. Fattura')->wrap()->placeholder('—')
+                    ->state(fn (Computer $record): ?string => $record->effectivePeriod()?->operation->invoice_reference ?? $record->invoice_reference)
                     ->visible(fn (): bool => $this->referenceColumns['invoice_reference']),
+                TextColumn::make('commercial_cycle')->label('Ciclo licenza')->wrap()
+                    ->state(fn (Computer $record): string => $record->effectivePeriod()?->operation->reference ?? ($record->hasTransferredLicense() ? 'Licenza trasferita' : 'Da associare'))
+                    ->description(function (Computer $record): string {
+                        $period = $record->effectivePeriod();
+                        if ($period === null) {
+                            return $record->hasTransferredLicense() ? 'Consulta lo storico del passaggio' : 'Vendita non collegata';
+                        }
+
+                        return CompanyRenewal::KINDS[$period->operation->kind]
+                            .($record->nextPeriod() !== null ? ' · Periodo futuro registrato' : '');
+                    }),
                 TextColumn::make('notes')->label('Note')->wrap()->limit(80)->tooltip(fn (Computer $record): ?string => $record->notes)
                     ->placeholder('Nessuna nota')->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('platform')->label('Sistema Operativo')->wrap()->placeholder('Non disponibile')->toggleable(isToggledHiddenByDefault: true),
@@ -183,6 +234,11 @@ class Licenze extends Dashboard implements HasTable
                 TextColumn::make('last_seen_at')->label('Ultimo Rilevamento')->dateTime()->placeholder('Non disponibile')->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
+                Filter::make('needs_renewal')->label('Da rinnovare entro 30 giorni o scadute')
+                    ->query(fn (Builder $query): Builder => $query->whereDate(DB::raw(Computer::commercialDateSql('expires_on')), '<=', today('Europe/Rome')->addDays(30)->toDateString())
+                        ->whereDoesntHave('periods', fn (Builder $periods): Builder => $periods->whereDate('starts_on', '>', today('Europe/Rome')->toDateString()))),
+                Filter::make('unlinked')->label('Da associare a vendita o rinnovo')
+                    ->query(fn (Builder $query): Builder => $query->unlinked()),
                 SelectFilter::make('status')->label('Stato commerciale')->options([
                     'missing' => 'Da completare', 'expired' => 'Scaduta', 'expiring' => 'In scadenza entro 30 giorni',
                     'active' => 'Attiva', 'future' => 'Da attivare',
@@ -191,11 +247,11 @@ class Licenze extends Dashboard implements HasTable
                     $horizon = today('Europe/Rome')->addDays(30)->toDateString();
 
                     return match ($data['value'] ?? null) {
-                        'missing' => $query->where(fn (Builder $q): Builder => $q->whereNull('activated_on')->orWhereNull('expires_on')),
-                        'expired' => $query->whereNotNull('activated_on')->whereDate('expires_on', '<', $day),
-                        'expiring' => $query->whereDate('activated_on', '<=', $day)->whereDate('expires_on', '>=', $day)->whereDate('expires_on', '<=', $horizon),
-                        'active' => $query->whereDate('activated_on', '<=', $day)->whereDate('expires_on', '>', $horizon),
-                        'future' => $query->whereNotNull('expires_on')->whereDate('activated_on', '>', $day),
+                        'missing' => $query->where(fn (Builder $q): Builder => $q->whereNull(DB::raw(Computer::commercialDateSql('activated_on')))->orWhereNull(DB::raw(Computer::commercialDateSql('expires_on')))),
+                        'expired' => $query->whereNotNull(DB::raw(Computer::commercialDateSql('activated_on')))->whereDate(DB::raw(Computer::commercialDateSql('expires_on')), '<', $day),
+                        'expiring' => $query->whereDate(DB::raw(Computer::commercialDateSql('activated_on')), '<=', $day)->whereDate(DB::raw(Computer::commercialDateSql('expires_on')), '>=', $day)->whereDate(DB::raw(Computer::commercialDateSql('expires_on')), '<=', $horizon),
+                        'active' => $query->whereDate(DB::raw(Computer::commercialDateSql('activated_on')), '<=', $day)->whereDate(DB::raw(Computer::commercialDateSql('expires_on')), '>', $horizon),
+                        'future' => $query->whereNotNull(DB::raw(Computer::commercialDateSql('expires_on')))->whereDate(DB::raw(Computer::commercialDateSql('activated_on')), '>', $day),
                         default => $query,
                     };
                 }),
@@ -211,8 +267,8 @@ class Licenze extends Dashboard implements HasTable
                         return $query->whereRaw('1 = 0');
                     }
 
-                    return $query->when(filled($data['from'] ?? null), fn (Builder $query): Builder => $query->whereDate('expires_on', '>=', $data['from']))
-                        ->when(filled($data['until'] ?? null), fn (Builder $query): Builder => $query->whereDate('expires_on', '<=', $data['until']));
+                    return $query->when(filled($data['from'] ?? null), fn (Builder $query): Builder => $query->whereDate(DB::raw(Computer::commercialDateSql('expires_on')), '>=', $data['from']))
+                        ->when(filled($data['until'] ?? null), fn (Builder $query): Builder => $query->whereDate(DB::raw(Computer::commercialDateSql('expires_on')), '<=', $data['until']));
                 })->indicateUsing(function (array $data): array {
                     $indicators = [];
                     foreach (['from' => 'Scadenza dal ', 'until' => 'Scadenza al '] as $key => $label) {
@@ -226,7 +282,7 @@ class Licenze extends Dashboard implements HasTable
             ])
             ->recordActions([
                 $this->editAction(),
-                ActionGroup::make([$this->transferAction(), $this->reconcileAction()])->label('Altre azioni'),
+                ActionGroup::make([$this->commercialAction(), $this->transferAction(), $this->reconcileAction()])->label('Altre azioni'),
             ])
             ->emptyStateHeading(fn (): string => empty($this->data['company_id']) ? 'Scegli un’azienda per vedere i computer' : 'Nessun computer da mostrare')
             ->emptyStateDescription('I computer importati compaiono automaticamente. Puoi anche aggiungere un PC manuale.');
@@ -239,7 +295,10 @@ class Licenze extends Dashboard implements HasTable
             ->selectRaw("MAX(CASE WHEN TRIM(quote_reference) <> '' THEN 1 ELSE 0 END) AS has_quote, MAX(CASE WHEN TRIM(invoice_reference) <> '' THEN 1 ELSE 0 END) AS has_invoice")
             ->first();
 
-        return ['quote_reference' => (bool) $references->has_quote, 'invoice_reference' => (bool) $references->has_invoice];
+        return [
+            'quote_reference' => (bool) $references->has_quote || CompanyRenewal::where('company_id', $this->selectedCompanyId())->whereNotNull('quote_reference')->where('quote_reference', '!=', '')->exists(),
+            'invoice_reference' => (bool) $references->has_invoice || CompanyRenewal::where('company_id', $this->selectedCompanyId())->whereNotNull('invoice_reference')->where('invoice_reference', '!=', '')->exists(),
+        ];
     }
 
     private function computerSections(): array
@@ -257,9 +316,20 @@ class Licenze extends Dashboard implements HasTable
                     ->placeholder('Non fornito dall’API')->wrap(),
                 TextEntry::make('product')->label('Prodotto Commerciale Salvato')->wrap()->columnSpanFull()
                     ->visible(fn (?Computer $record): bool => filled($record?->product)),
+                TextEntry::make('gravityzone_license_status')->label('Stato licenza GravityZone')->badge()->columnSpanFull()
+                    ->visible(fn (?Computer $record): bool => $record !== null)
+                    ->state(fn (?Computer $record): ?string => $record?->gravityzoneLicenseDisplay()['label'])
+                    ->color(fn (?Computer $record): string => $record?->gravityzoneLicenseDisplay()['color'] ?? 'gray')
+                    ->afterLabel(View::make('filament.computer-license-info')),
             ]),
-            Section::make('Licenza Commerciale')->icon(Heroicon::OutlinedKey)->columns(2)->schema([
+            Section::make('Ciclo commerciale')->icon(Heroicon::OutlinedClock)->visible(fn (?Computer $record): bool => $record !== null)
+                ->schema([
+                    View::make('filament.computer-cycles')->viewData(fn (Computer $record): array => ['computer' => $record->loadMissing(['periods.operation', 'company.renewals'])]),
+                    Actions::make([$this->commercialAction('cyclesFromModal')]),
+                ]),
+            Section::make('Licenza Commerciale')->icon(Heroicon::OutlinedKey)->visible(fn (?Computer $record): bool => $record === null || $record->effectivePeriod() === null)->columns(2)->schema([
                 DatePicker::make('activated_on')->label('Attivazione')->placeholder('es. 01/01/2026')->native(false)->displayFormat('d/m/Y')->nullable()->live()
+                    ->hint(fn (?Computer $record): ?string => $record?->activation_from_first_seen ? 'Primo rilevamento GravityZone' : null)
                     ->afterStateUpdated(function (mixed $state, Get $get, Set $set): void {
                         if (filled($state) && blank($get('expires_on')) && validator(['date' => $state], ['date' => 'date_format:Y-m-d'])->passes()) {
                             $set('expires_on', CarbonImmutable::parse($state)->addYearNoOverflow()->toDateString());
@@ -271,8 +341,8 @@ class Licenze extends Dashboard implements HasTable
                     ->validationMessages(['regex' => 'Usa un importo non negativo con al massimo due decimali, senza separatori delle migliaia.']),
             ]),
             Section::make('Riferimenti e Note')->icon(Heroicon::OutlinedDocumentText)->columns(2)->schema([
-                TextInput::make('quote_reference')->label('Riferimento Preventivo')->maxLength(255),
-                TextInput::make('invoice_reference')->label('Riferimento Fattura')->maxLength(255),
+                TextInput::make('quote_reference')->label('Riferimento Preventivo')->maxLength(255)->visible(fn (?Computer $record): bool => $record === null || $record->effectivePeriod() === null),
+                TextInput::make('invoice_reference')->label('Riferimento Fattura')->maxLength(255)->visible(fn (?Computer $record): bool => $record === null || $record->effectivePeriod() === null),
                 Textarea::make('notes')->label('Note')->maxLength(10000)->rows(2)->columnSpanFull(),
             ]),
             Section::make('Storico Automatico')->collapsed()->visible(fn (?Computer $record): bool => filled($record?->history))
@@ -313,7 +383,8 @@ class Licenze extends Dashboard implements HasTable
                 Select::make('target_id')->label('Computer sostitutivo')->required()->searchable()
                     ->noOptionsMessage('Nessun computer disponibile senza dati commerciali.')
                     ->options(fn (Computer $record): array => Computer::query()->where('company_id', $record->company_id)->whereKeyNot($record->id)
-                        ->whereNull('activated_on')->whereNull('expires_on')->orderBy('id')->get()
+                        ->where(fn (Builder $query): Builder => $query->whereNull('activated_on')->orWhere('activation_from_first_seen', true))
+                        ->whereNull('expires_on')->orderBy('id')->get()
                         ->reject(fn (Computer $pc): bool => $pc->hasCommercialData())
                         ->mapWithKeys(fn (Computer $pc): array => [$pc->id => '#'.$pc->id.' · '.$pc->display_name])->all()),
             ])->action(function (Computer $record, array $data, Schema $schema, Action $action): void {
@@ -338,7 +409,8 @@ class Licenze extends Dashboard implements HasTable
                     ->options(fn (Computer $record): array => Computer::query()->where('company_id', $record->company_id)
                         ->where('gravityzone_company_id', $record->company_id)->whereNotNull('gravityzone_id')->where('is_present', true)
                         ->whereHas('gravityzoneCompany', fn (Builder $query): Builder => $query->where('is_present', true))
-                        ->whereNull('activated_on')->whereNull('expires_on')->orderBy('id')->get()
+                        ->where(fn (Builder $query): Builder => $query->whereNull('activated_on')->orWhere('activation_from_first_seen', true))
+                        ->whereNull('expires_on')->orderBy('id')->get()
                         ->reject(fn (Computer $pc): bool => $pc->hasCommercialData() || filled($pc->notes) || filled($pc->name) || ! empty($pc->history))
                         ->mapWithKeys(fn (Computer $pc): array => [$pc->id => $pc->display_name.' · ID '.$pc->gravityzone_id.' · '.($pc->platform ?? 'Sistema non noto')])->all()),
             ])->action(function (Computer $record, array $data, Schema $schema, Action $action): void {
@@ -392,25 +464,33 @@ class Licenze extends Dashboard implements HasTable
             });
     }
 
+    private function commercialAction(string $name = 'cycles'): Action
+    {
+        return Action::make($name)->label('Vendite e rinnovi')->icon(Heroicon::OutlinedClock)->authorize('update')
+            ->modalHeading(fn (Computer $record): string => $record->company->name.' · Vendite e rinnovi')
+            ->modalWidth('7xl')->modalSubmitAction(false)->modalCancelActionLabel('Chiudi')
+            ->schema(fn (Computer $record): array => [
+                Livewire::make(CompanyRenewals::class, ['companyId' => $record->company_id, 'computerId' => $record->id])->key('computer-renewals-'.$record->id),
+            ]);
+    }
+
+    #[On('company-renewals-updated')]
+    public function refreshCommercialPeriods(): void
+    {
+        $this->flushCachedTableRecords();
+        unset($this->referenceColumns);
+    }
+
+    public function companyRenewalsAction(): Action
+    {
+        return CompanyRenewalsAction::make()->record(fn (): ?Company => Company::find($this->selectedCompanyId()));
+    }
+
     protected function getHeaderActions(): array
     {
         return [
             $this->createAction()->visible(fn (): bool => ($this->data['company_id'] ?? null) !== 'all'),
-            Action::make('synchronize')->label('Aggiorna da GravityZone')->color('gray')->authorize('synchronize', Company::class)
-                ->requiresConfirmation()->modalHeading('Aggiornare aziende e computer?')
-                ->modalDescription('Legge GravityZone e conserva date, prezzi e note locali. I nuovi computer compaiono con le date da completare.')
-                ->action(function (): void {
-                    Gate::authorize('synchronize', Company::class);
-                    try {
-                        app(CompanySynchronizer::class)->sync();
-                        app(EndpointSynchronizer::class)->sync();
-                        Notification::make()->success()->title('Sincronizzazione completata')->send();
-                    } catch (GravityZoneException $exception) {
-                        Notification::make()->danger()->title('Sincronizzazione non completata')->body($exception->getMessage())->send();
-                    }
-                    $this->flushCachedTableRecords();
-                    $this->dispatch('refresh-page')->to(CompanyLicenses::class);
-                }),
+            SynchronizeGravityZoneAction::make(),
         ];
     }
 }

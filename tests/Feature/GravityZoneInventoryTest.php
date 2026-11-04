@@ -41,9 +41,9 @@ class GravityZoneInventoryTest extends TestCase
         $endpoints = $this->readInventory();
 
         $this->assertSame([
-            ['id' => 'endpoint-1', 'name' => 'Postazione esempio 1', 'platform' => 'Windows Server 2019 Standard', 'is_managed' => true, 'is_isolated' => null],
-            ['id' => 'endpoint-2', 'name' => 'Postazione esempio 2', 'platform' => 'Windows Server 2016 Standard', 'is_managed' => true, 'is_isolated' => null],
-            ['id' => 'endpoint-3', 'name' => 'Postazione esempio 3', 'platform' => 'Linux Ubuntu 20.04.3 LTS', 'is_managed' => true, 'is_isolated' => null],
+            ['id' => 'endpoint-1', 'name' => 'Postazione esempio 1', 'platform' => 'Windows Server 2019 Standard', 'is_managed' => true, 'is_isolated' => null, 'first_seen_on' => null],
+            ['id' => 'endpoint-2', 'name' => 'Postazione esempio 2', 'platform' => 'Windows Server 2016 Standard', 'is_managed' => true, 'is_isolated' => null, 'first_seen_on' => null],
+            ['id' => 'endpoint-3', 'name' => 'Postazione esempio 3', 'platform' => 'Linux Ubuntu 20.04.3 LTS', 'is_managed' => true, 'is_isolated' => null, 'first_seen_on' => null],
         ], $endpoints);
         Http::assertSentInOrder([
             fn (Request $request): bool => $request['params'] === [
@@ -87,20 +87,21 @@ class GravityZoneInventoryTest extends TestCase
     {
         $this->fakeInventory([
             $this->item(['details' => ['operatingSystemVersion' => 'Linux', 'isManaged' => false, 'isIsolated' => true,
-                'ip' => 'private-data', 'macs' => ['private-data'], 'firstSeen' => 'private-data', 'futureField' => 'private-data']]),
+                'ip' => 'private-data', 'macs' => ['private-data'], 'firstSeen' => '2026-08-15T10:30:00', 'futureField' => 'private-data']]),
             $this->item(['id' => 'vm-1', 'type' => 6]),
-            $this->item(['id' => 'ec2-1', 'type' => 7, 'details' => ['operatingSystemVersion' => '', 'isManaged' => null, 'isIsolated' => null]]),
+            $this->item(['id' => 'ec2-1', 'type' => 7, 'details' => ['operatingSystemVersion' => '', 'isManaged' => null, 'isIsolated' => null, 'firstSeen' => '']]),
             $this->item(['id' => 'group-1', 'type' => 4]),
         ]);
 
         $endpoints = $this->readInventory();
 
         $this->assertCount(3, $endpoints);
-        $this->assertSame(['id' => 'endpoint-1', 'name' => 'Postazione di prova', 'platform' => 'Linux', 'is_managed' => false, 'is_isolated' => true], $endpoints[0]);
+        $this->assertSame(['id' => 'endpoint-1', 'name' => 'Postazione di prova', 'platform' => 'Linux', 'is_managed' => false, 'is_isolated' => true, 'first_seen_on' => '2026-08-15'], $endpoints[0]);
         $this->assertNull($endpoints[1]['platform']);
         $this->assertNull($endpoints[1]['is_managed']);
         $this->assertNull($endpoints[1]['is_isolated']);
         $this->assertNull($endpoints[2]['platform']);
+        $this->assertNull($endpoints[2]['first_seen_on']);
         $this->assertStringNotContainsString('private-data', json_encode($endpoints));
     }
 
@@ -169,6 +170,10 @@ class GravityZoneInventoryTest extends TestCase
             'invalid details' => [['details' => []]],
             'invalid platform' => [['details' => ['operatingSystemVersion' => 123]]],
             'invalid management flag' => [['details' => ['isManaged' => 'false']]],
+            'invalid first seen type' => [['details' => ['firstSeen' => 123]]],
+            'invalid first seen day' => [['details' => ['firstSeen' => '2026-02-29T10:30:00']]],
+            'invalid first seen time' => [['details' => ['firstSeen' => '2026-08-15T24:00:00']]],
+            'invalid first seen format' => [['details' => ['firstSeen' => '15/08/2026']]],
             'invalid isolation flag' => [['details' => ['isIsolated' => 1]]],
         ];
     }

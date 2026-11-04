@@ -49,8 +49,8 @@ class GravityZoneClientTest extends TestCase
         );
         Http::assertSentCount(1);
 
-        $this->assertSame(['getCompaniesList', 'getCompanyDetails', 'getLicenseInfo', 'getNetworkInventoryItems'], GravityZoneClient::READ_ONLY_METHODS);
-        $this->assertSame(['getCompaniesList', 'getCompanyDetails', 'getLicenseInfo', 'getNetworkInventoryItems'], array_map(
+        $this->assertSame(['getCompaniesList', 'getCompanyDetails', 'getLicenseInfo', 'getNetworkInventoryItems', 'getManagedEndpointDetails'], GravityZoneClient::READ_ONLY_METHODS);
+        $this->assertSame(['getCompaniesList', 'getCompanyDetails', 'getLicenseInfo', 'getNetworkInventoryItems', 'getManagedEndpointDetails'], array_map(
             fn (ReflectionMethod $method): string => $method->getName(),
             (new ReflectionClass(GravityZoneClient::class))->getMethods(ReflectionMethod::IS_PUBLIC),
         ));
@@ -287,7 +287,8 @@ class GravityZoneClientTest extends TestCase
             $this->travel($seconds - 1)->seconds();
             foreach (GravityZoneClient::READ_ONLY_METHODS as $method) {
                 try {
-                    (new GravityZoneClient)->{$method}($this->settings(), 'company-1');
+                    $arguments = $method === 'getManagedEndpointDetails' ? ['endpoint-1', 'company-1'] : ['company-1'];
+                    (new GravityZoneClient)->{$method}($this->settings(), ...$arguments);
                     $this->fail('Nessuna lettura deve partire durante l’attesa condivisa.');
                 } catch (GravityZoneException $exception) {
                     $this->assertTrue($exception->stopSynchronization);

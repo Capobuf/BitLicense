@@ -1,8 +1,8 @@
 # Contratto GravityZone verificato
 
-Verifica documentale: 4 novembre 2026. Il client espone soltanto quattro letture
+Verifica documentale: 4 novembre 2026. Il client espone soltanto cinque letture
 esplicite: `getCompaniesList`, `getNetworkInventoryItems` (Network),
-`getLicenseInfo` (Licensing) e `getCompanyDetails` (Companies).
+`getLicenseInfo` (Licensing), `getCompanyDetails` (Companies) e `getManagedEndpointDetails` (Network).
 Non contiene un invocatore RPC generico o metodi che modificano GravityZone.
 
 La base configurata termina in `/api`. Le richieste POST usano JSON-RPC 2.0,
@@ -113,9 +113,9 @@ I partner non condivisi conservano l’eventuale inventario locale precedente,
 senza dichiarare una nuova lettura riuscita o spostare dati commerciali.
 
 Si conservano soltanto `id`, `name` e i dettagli disponibili
-`operatingSystemVersion`, `isManaged`, `isIsolated`. I campi mancanti sono
-sconosciuti; non si inventano stato online, prodotto commerciale o attivazione.
-Non si acquisiscono IP, MAC, SID o `firstSeen`. Le richieste sono distanziate
+`operatingSystemVersion`, `isManaged`, `isIsolated` e `firstSeen`. I campi mancanti sono
+sconosciuti; non si inventano stato online o prodotto commerciale.
+Non si acquisiscono IP, MAC o SID. Le richieste sono distanziate
 di 250 ms; eventuali 429 interrompono le successive, senza retry.
 Fonte: [getNetworkInventoryItems](https://www.bitdefender.com/business/support/en/77211-128494-getnetworkinventoryitems.html).
 
@@ -124,10 +124,29 @@ Prima di cambiare i dati si controllano i conflitti di appartenenza fra tutte
 le aziende lette. Gli inventari ambigui conservano i dati precedenti.
 Gli aggiornamenti sono transazionali per azienda. Ogni elemento importato
 crea direttamente un `Computer` con `gravityzone_id` univoco, nome tecnico,
-azienda remota e altri dettagli tecnici; le date commerciali iniziano vuote.
+azienda remota e altri dettagli tecnici; la scadenza commerciale inizia vuota.
 Non vengono più creati o associati record di postazioni/coperture separate.
 L’upsert aggiorna soltanto i campi remoti: non cambia azienda locale,
 date commerciali, prodotto, prezzo, riferimenti, note, versione o storico.
+
+Su richiesta esplicita del committente del 04/11/2026, `details.firstSeen`
+inizializza automaticamente **solo l’attivazione mancante**. Il timestamp
+`YYYY-MM-DDTHH:mm:ss` documentato viene validato rigorosamente e se ne conserva
+la data calendario, senza attribuire un fuso non dichiarato dall’API.
+Si conserva in `first_seen_on` la prima data valida acquisita; assenza/null/stringa vuota
+non producono date sostitutive. La stringa vuota è stata osservata nella
+lettura reale autorizzata del 04/11/2026. Un formato errato invalida l’inventario
+aziendale, conservando i dati precedenti.
+
+Questa inizializzazione è l’unica eccezione esplicitamente richiesta alla
+separazione dei dati commerciali: avviene sotto lock, incrementa la versione
+e conserva lo snapshot precedente quando non vuoto. `activation_from_first_seen`
+distingue una data automatica da una data locale, così un import altrimenti
+vuoto rimane riconciliabile e utilizzabile come sostituto. Le date già presenti,
+quelle cancellate/trasferite e le scadenze sono conservate. Se il primo
+rilevamento supera una scadenza locale già inserita, l’attivazione rimane vuota.
+Il primo rilevamento viene acquisito una sola volta: sincronizzazioni successive
+non correggono né ripristinano l’attivazione. Non si aggiungono richieste API.
 
 `company_id` conserva l’appartenenza locale, mentre `gravityzone_company_id`
 segue quella rilevata. Le assenze si calcolano sull’azienda remota: uno
@@ -161,6 +180,54 @@ mantengono ID, proprietà e tutti i dati commerciali/storico; 13 nuovi PC
 iniziano con campi commerciali vuoti. Confrontati anche contatti/note aziendali
 e credenziale cifrata, invariati. Database MySQL locale verificato, nessuna
 modifica a GravityZone; dettagli e limiti in [dashboard-check.md](dashboard-check.md).
+
+## Stato licenza endpoint (#33)
+
+`getManagedEndpointDetails` usa `/v1.0/jsonrpc/network` con il solo `endpointId`.
+Si verificano `result.id` e `result.companyId` contro endpoint e azienda
+rilevati, prima di leggere `agent.licensed`: 0 autenticazione in attesa,
+1 licenza attiva, 2 scaduta, 6 assente/non applicabile. Campi mancanti/nulli
+e codici interi sconosciuti restituiscono stato non disponibile. Oggetti o
+tipi errati vengono rifiutati senza esporre la risposta remota.
+Non si conservano IP, utenti, moduli, chiavi o altri dati del dettaglio.
+`state` indica lo stato della macchina e non viene usato come stato licenza.
+
+La lettura avviene solo per endpoint presenti e `isManaged: true`, dopo
+l’import transazionale dell’inventario e la verifica dei conflitti aziendali.
+Ogni risultato aggiorna soltanto `gravityzone_license_status`,
+`license_checked_at` e `license_sync_error`, usando l’ID GravityZone anche
+quando il PC è stato riconciliato. Nessuna modifica a versione, dati o storico
+commerciali. Se l’endpoint non è più gestito o lo stato di gestione manca,
+lo stato licenza precedente viene svuotato perché non è applicabile alla
+rilevazione corrente; gli endpoint assenti conservano invece l’ultimo dato.
+
+Un errore di dettaglio conserva stato e data precedenti, salva un errore
+sanificato e non annulla l’inventario già acquisito. Le altre letture proseguono
+solo per errori puntuali; rete, HTTP, autenticazione e 429 interrompono le
+successive chiamate. Gli endpoint saltati sono segnalati come non aggiornati.
+Il riepilogo aziendale/globale segnala la sincronizzazione incompleta, anche
+se l’inventario è stato importato. Un’interruzione anomala lascia il messaggio
+di tentativo incompleto già presente sull’azienda.
+
+Ogni richiesta aggiuntiva è distanziata di 250 ms e riusa lock e cooldown
+condivisi. Non si effettuano chiamate al rendering. Nessuna nuova dipendenza
+o servizio: resta disponibile il comando sincrono `bitlicense:sync-endpoints`.
+Il pannello richiede il ciclo completo in background tramite la cache condivisa;
+il Cron esegue `bitlicense:sync` alle 03:00 Europe/Rome oppure alla prima
+scansione al minuto dopo una richiesta manuale. Non dipende dal timeout
+della richiesta web. Apertura e navigazione non avviano sincronizzazioni.
+
+La fixture `endpoint-license.json` è una proiezione anonima dell’esempio
+ufficiale, non una risposta cliente; errori e varianti sono simulati nei test.
+Dopo il via libera esplicito del committente, collaudo reale del 04/11/2026:
+115 PC importati, 108 dettagli di endpoint gestiti acquisiti (89 con codice 1,
+19 con codice 2), 7 PC non gestiti senza richiesta di dettaglio. Nessun errore
+API/aziendale; dati commerciali, storico, proprietà locale e credenziale salvata
+invariati. La fixture resta anonima/documentale; non si conserva il payload reale.
+Gli altri codici e i casi di errore sono verificati soltanto con risposte simulate.
+Fonti: [getManagedEndpointDetails](https://www.bitdefender.com/business/support/en/77211-128484-getmanagedendpointdetails.html),
+[Network](https://www.bitdefender.com/business/support/en/77211-128476-network.html),
+[limiti API](https://www.bitdefender.com/business/support/en/77211-394430-api-rate-limits.html).
 
 ## Ripetibilità, errori e limiti
 

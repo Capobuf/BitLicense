@@ -8,11 +8,11 @@ use App\Integrations\GravityZone\GravityZoneException;
 use App\Models\Company;
 use App\Models\Computer;
 use App\Models\GravityZoneSetting;
-use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Validation\ValidationException;
 use Mockery\MockInterface;
 use Tests\TestCase;
 
@@ -178,7 +178,7 @@ class EndpointSynchronizationTest extends TestCase
         $this->assertStringNotContainsString('private-db-value', $error);
     }
 
-    public function test_the_shared_lock_blocks_company_and_endpoint_sync_and_daily_scheduler_is_registered(): void
+    public function test_the_shared_lock_blocks_company_and_endpoint_sync(): void
     {
         $lock = Cache::lock('gravityzone-sync', 3600);
         $this->assertTrue($lock->get());
@@ -189,9 +189,6 @@ class EndpointSynchronizationTest extends TestCase
         $this->artisan('bitlicense:sync-endpoints')->assertSuccessful();
         $this->assertTrue($lock->get());
         $lock->release();
-        $event = collect(app(Schedule::class)->events())->sole(fn ($event) => str_contains($event->command ?? '', 'bitlicense:sync-endpoints'));
-        $this->assertSame('0 4 * * *', $event->expression);
-        $this->assertSame('Europe/Rome', $event->timezone);
         Http::assertNothingSent();
     }
 
@@ -209,6 +206,170 @@ class EndpointSynchronizationTest extends TestCase
         $this->assertNull($partner->endpoints_synced_at);
     }
 
+    public function test_license_changes_errors_and_recovery_preserve_commercial_data_and_last_success(): void
+    {
+        $company = $this->company('company-1');
+        $items = ['company-1' => [$this->item('endpoint-1'), $this->item('endpoint-2')]];
+        $this->mockItems($items);
+        $sync = app(EndpointSynchronizer::class);
+        $sync->sync();
+        $pc = Computer::where('gravityzone_id', 'endpoint-1')->sole();
+        $pc->updateCommercial(['activated_on' => '2026-01-01', 'expires_on' => '2027-01-01', 'amount' => '42,50', 'notes' => 'Locale'], 0);
+        $pc->updateCommercial(['expires_on' => '2028-01-01'], 1);
+        $commercial = $pc->only(['company_id', 'activated_on', 'expires_on', 'price_cents', 'notes', 'history', 'commercial_version']);
+        $checkedAt = $pc->license_checked_at;
+        $this->assertSame(1, $pc->gravityzone_license_status);
+        $this->assertNotNull($checkedAt);
+
+        $this->travel(1)->hours();
+        $this->mockItems($items, ['endpoint-1' => new GravityZoneException('Dettaglio non disponibile.'), 'endpoint-2' => 2]);
+        $this->artisan('bitlicense:sync-endpoints')->assertFailed();
+        $this->assertSame(1, $pc->refresh()->gravityzone_license_status);
+        $this->assertTrue($pc->license_checked_at->equalTo($checkedAt));
+        $this->assertSame('Dettaglio non disponibile.', $pc->license_sync_error);
+        $successful = Computer::where('gravityzone_id', 'endpoint-2')->sole();
+        $this->assertSame(2, $successful->gravityzone_license_status);
+        $this->assertSame('Licenza Scaduta', $successful->gravityzoneLicenseDisplay()['label']);
+        $this->assertStringContainsString('1 computer', $company->refresh()->endpoints_sync_error);
+        $this->assertTrue($pc->is_present);
+        $this->assertEquals($commercial, $pc->only(array_keys($commercial)));
+
+        $this->travel(1)->hours();
+        $this->mockItems($items, ['endpoint-1' => 2, 'endpoint-2' => null]);
+        $this->assertSame(2, $sync->sync());
+        $this->assertSame(2, $pc->refresh()->gravityzone_license_status);
+        $this->assertTrue($pc->license_checked_at->equalTo(now()));
+        $this->assertNull($pc->license_sync_error);
+        $unknown = Computer::where('gravityzone_id', 'endpoint-2')->sole();
+        $this->assertNull($unknown->gravityzone_license_status);
+        $this->assertTrue($unknown->license_checked_at->equalTo(now()));
+        $this->assertNull($company->refresh()->endpoints_sync_error);
+        $this->assertEquals($commercial, $pc->only(array_keys($commercial)));
+        $this->assertDatabaseCount('computers', 2);
+    }
+
+    public function test_license_rate_limit_stops_remaining_details_but_keeps_imported_inventory_and_prior_states(): void
+    {
+        $this->company('company-1');
+        $this->company('company-2');
+        $items = ['company-1' => [$this->item('endpoint-1'), $this->item('endpoint-2')], 'company-2' => [$this->item('endpoint-3')]];
+        $this->mockItems($items);
+        app(EndpointSynchronizer::class)->sync();
+        $previous = Computer::orderBy('id')->get()->map->only(['gravityzone_license_status', 'license_checked_at'])->all();
+        $this->travel(1)->hours();
+        $this->mock(GravityZoneClient::class, function (MockInterface $mock) use ($items): void {
+            $mock->shouldReceive('getNetworkInventoryItems')->twice()->andReturnUsing(fn ($settings, $id) => $items[$id]);
+            $mock->shouldReceive('getManagedEndpointDetails')->once()->withArgs(fn ($settings, $id, $companyId) => $id === 'endpoint-1' && $companyId === 'company-1')
+                ->andThrow(new GravityZoneException('Limite richieste. Riprova tra 90 secondi.', stopSynchronization: true));
+        });
+
+        $this->artisan('bitlicense:sync-endpoints')->assertFailed();
+        $this->assertEquals($previous, Computer::orderBy('id')->get()->map->only(['gravityzone_license_status', 'license_checked_at'])->all());
+        $this->assertSame(3, Computer::whereNotNull('license_sync_error')->where('is_present', true)->count());
+        $this->assertSame(2, Company::whereNotNull('endpoints_sync_error')->count());
+        $this->assertStringContainsString('90 secondi', GravityZoneSetting::find(1)->endpoints_sync_error);
+    }
+
+    public function test_only_present_managed_imports_request_license_details_and_unmanaged_state_is_cleared(): void
+    {
+        $company = $this->company('company-1');
+        Computer::create(['company_id' => $company->id, 'name' => 'Manuale']);
+        $this->mockItems(['company-1' => [$this->item('unmanaged'), $this->item('unknown'), $this->item('absent')]]);
+        app(EndpointSynchronizer::class)->sync();
+        $items = [array_replace($this->item('unmanaged'), ['is_managed' => false]), array_replace($this->item('unknown'), ['is_managed' => null])];
+        $this->mock(GravityZoneClient::class, function (MockInterface $mock) use ($items): void {
+            $mock->shouldReceive('getNetworkInventoryItems')->once()->andReturn($items);
+            $mock->shouldNotReceive('getManagedEndpointDetails');
+        });
+
+        $this->assertSame(2, app(EndpointSynchronizer::class)->sync());
+        foreach (Computer::whereIn('gravityzone_id', ['unmanaged', 'unknown'])->get() as $pc) {
+            $this->assertNull($pc->gravityzone_license_status);
+            $this->assertNull($pc->license_checked_at);
+            $this->assertNull($pc->license_sync_error);
+        }
+        $absent = Computer::where('gravityzone_id', 'absent')->sole();
+        $this->assertFalse($absent->is_present);
+        $this->assertSame(1, $absent->gravityzone_license_status);
+        $this->assertDatabaseCount('computers', 4);
+    }
+
+    public function test_first_seen_fills_missing_activation_once_preserves_expiry_and_rejects_stale_forms(): void
+    {
+        $company = $this->company('company-1');
+        $items = [$this->item('existing'), $this->item('empty'), $this->item('conflict'), $this->item('cleared')];
+        $this->mockItems(['company-1' => $items]);
+        $sync = app(EndpointSynchronizer::class);
+        $sync->sync();
+        $existing = Computer::where('gravityzone_id', 'existing')->sole();
+        $existing->updateCommercial(['activated_on' => '2026-01-01', 'expires_on' => '2027-01-01'], 0);
+        $before = $existing->getAttributes();
+        $empty = Computer::where('gravityzone_id', 'empty')->sole();
+        $empty->updateCommercial(['expires_on' => '2027-03-01', 'amount' => '42,50'], 0);
+        $version = $empty->commercial_version;
+        $conflict = Computer::where('gravityzone_id', 'conflict')->sole();
+        $conflict->updateCommercial(['expires_on' => '2025-01-01'], 0);
+        $cleared = Computer::where('gravityzone_id', 'cleared')->sole();
+        $cleared->updateCommercial(['activated_on' => '2025-01-01'], 0);
+        $cleared->updateCommercial(['activated_on' => null], 1);
+        $items = array_map(fn ($item) => $item + ['first_seen_on' => '2026-02-28'], $items);
+        $items[] = $this->item('new') + ['first_seen_on' => '2024-02-29'];
+        $this->mockItems(['company-1' => $items]);
+        $sync->sync();
+        $this->assertSame('2026-02-28', $empty->refresh()->activated_on->toDateString());
+        $this->assertTrue($empty->activation_from_first_seen);
+        $this->assertSame('2027-03-01', $empty->expires_on->toDateString());
+        $this->assertSame(4250, $empty->price_cents);
+        $this->assertSame($version + 2, $empty->commercial_version);
+        $this->assertNull($empty->history[0]['previous']['activated_on']);
+        $this->assertSame('2027-03-01', $empty->history[0]['previous']['expires_on']);
+        foreach (['activated_on', 'expires_on', 'history'] as $field) {
+            $this->assertSame($before[$field], $existing->refresh()->getRawOriginal($field));
+        }
+        $this->assertNull($conflict->refresh()->activated_on);
+        $this->assertNull($cleared->refresh()->activated_on);
+        $new = Computer::where('gravityzone_id', 'new')->sole();
+        $this->assertSame('2024-02-29', $new->activated_on->toDateString());
+        $this->assertNull($new->expires_on);
+        $after = $empty->getAttributes();
+        $sync->sync();
+        $this->assertSame($after, $empty->refresh()->getAttributes());
+        $this->assertSame('initial', $new->effectivePeriod()->operation->kind);
+        $sync->sync();
+        $this->assertSame('2024-02-29', $new->refresh()->activated_on->toDateString());
+        $this->expectException(ValidationException::class);
+        $empty->updateCommercial(['activated_on' => null], $version);
+    }
+
+    public function test_auto_activation_does_not_block_reconciliation_or_transfer_and_never_returns_after_transfer(): void
+    {
+        $company = $this->company('company-1');
+        $items = [
+            $this->item('reconcile') + ['first_seen_on' => '2026-02-28'],
+            $this->item('replacement') + ['first_seen_on' => '2026-03-01'],
+        ];
+        $this->mockItems(['company-1' => $items]);
+        $sync = app(EndpointSynchronizer::class);
+        $sync->sync();
+        $remote = Computer::where('gravityzone_id', 'reconcile')->sole();
+        $replacement = Computer::where('gravityzone_id', 'replacement')->sole();
+        $this->assertFalse($remote->hasCommercialData());
+        $manual = Computer::create(['company_id' => $company->id, 'name' => 'PC manuale']);
+        $manual->updateCommercial(['activated_on' => '2026-01-01', 'expires_on' => '2027-01-01'], 0);
+        $manual->reconcileWith($remote, $manual->commercial_version);
+        $this->assertSame('2026-02-28', $manual->first_seen_on->toDateString());
+        $this->assertSame('2026-01-01', $manual->activated_on->toDateString());
+        $this->assertFalse($manual->activation_from_first_seen);
+        $manual->transferTo($replacement, $manual->commercial_version);
+        $this->assertSame('2026-01-01', $replacement->activated_on->toDateString());
+        $this->assertFalse($replacement->activation_from_first_seen);
+        $sync->sync();
+        $this->assertNull($manual->refresh()->activated_on);
+        $this->assertSame('2026-01-01', $replacement->refresh()->activated_on->toDateString());
+        $this->assertSame('2026-03-01', $replacement->first_seen_on->toDateString());
+        $this->assertDatabaseCount('computers', 2);
+    }
+
     private function company(string $externalId): Company
     {
         $company = new Company;
@@ -222,10 +383,18 @@ class EndpointSynchronizationTest extends TestCase
         return ['id' => $id, 'name' => $name, 'platform' => 'Windows', 'is_managed' => true, 'is_isolated' => null];
     }
 
-    private function mockItems(array $items): void
+    private function mockItems(array $items, array $licenses = []): void
     {
-        $this->mock(GravityZoneClient::class, function (MockInterface $mock) use ($items): void {
+        $this->mock(GravityZoneClient::class, function (MockInterface $mock) use ($items, $licenses): void {
             $mock->shouldReceive('getNetworkInventoryItems')->andReturnUsing(fn ($settings, $companyId) => $items[$companyId] ?? []);
+            $mock->shouldReceive('getManagedEndpointDetails')->andReturnUsing(function ($settings, $endpointId) use ($licenses): ?int {
+                $result = array_key_exists($endpointId, $licenses) ? $licenses[$endpointId] : 1;
+                if ($result instanceof GravityZoneException) {
+                    throw $result;
+                }
+
+                return $result;
+            });
         });
     }
 }

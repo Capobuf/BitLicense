@@ -11,6 +11,8 @@ class Impostazioni extends Cluster
 {
     protected static ?string $title = 'Impostazioni';
 
+    protected static ?int $navigationSort = 1;
+
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedCog6Tooth;
 
     protected static ?SubNavigationPosition $subNavigationPosition = SubNavigationPosition::Top;
