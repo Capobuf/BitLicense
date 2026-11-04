@@ -17,6 +17,14 @@
     background: linear-gradient(120deg, color-mix(in srgb, var(--primary-500) 8%, transparent), transparent 70%);
 }
 
+.bl-company-hero-suspended {
+    background: linear-gradient(120deg, color-mix(in srgb, var(--danger-500) 8%, transparent), transparent 70%);
+}
+
+.bl-company-hero-expiring {
+    background: linear-gradient(120deg, color-mix(in srgb, var(--warning-500) 8%, transparent), transparent 70%);
+}
+
 .bl-all-companies {
     display: grid;
     gap: 1.5rem;
@@ -29,8 +37,14 @@
     overflow-wrap: anywhere;
 }
 
+.bl-company-name .fi-link {
+    font-size: inherit;
+    font-weight: inherit;
+}
+
 .bl-company-license,
-.bl-company-license-label {
+.bl-company-license-label,
+.bl-computer-license-status {
     display: flex;
     align-items: center;
     gap: .5rem;
@@ -131,6 +145,10 @@
     white-space: nowrap;
 }
 
+.bl-computer-license-status {
+    padding: .75rem 1rem;
+}
+
 .bl-computer-activation {
     color: var(--gray-600);
 }
@@ -148,7 +166,121 @@
         grid-column: 1 / -1;
     }
 
-    .bl-computer-validity {
+    .bl-computer-validity,
+    .bl-computer-license-status {
         padding: 0;
+    }
+}
+
+.bl-commercial-detail {
+    display: grid;
+    gap: 1.25rem;
+    min-width: 0;
+}
+
+.bl-commercial-summary {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    font-size: .875rem;
+}
+
+.bl-commercial-summary dt,
+.bl-commercial-note {
+    color: var(--gray-600);
+    font-size: .8125rem;
+    line-height: 1.6;
+}
+
+.dark .bl-commercial-summary dt,
+.dark .bl-commercial-note {
+    color: var(--gray-400);
+}
+
+.bl-commercial-summary dd {
+    margin-top: .25rem;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+    font-variant-numeric: tabular-nums;
+}
+
+.bl-commercial-overview {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 1rem;
+    border-radius: .75rem;
+    background: color-mix(in srgb, var(--primary-500) 6%, transparent);
+    border: 1px solid color-mix(in srgb, var(--primary-500) 18%, transparent);
+}
+
+.bl-commercial-overview dd {
+    font-size: 1.5rem;
+}
+
+.bl-commercial-title {
+    font-size: .875rem;
+    font-weight: 600;
+}
+
+.bl-periods-table {
+    overflow-x: auto;
+    padding: 1px;
+}
+
+.bl-periods-table > table {
+    display: table;
+    min-width: 46rem;
+    table-layout: fixed;
+}
+
+.bl-periods-table > table > thead {
+    display: table-header-group;
+}
+
+.bl-periods-table > table > tbody {
+    display: table-row-group;
+}
+
+.bl-periods-table > table > tbody > tr {
+    display: table-row;
+    padding: 0;
+}
+
+.bl-periods-table > table > tbody > tr > td {
+    display: table-cell;
+    padding: .5rem .75rem;
+    vertical-align: middle;
+    overflow-wrap: anywhere;
+}
+
+.bl-periods-table .fi-fo-field-label-content,
+.bl-periods-table .fi-in-entry-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+}
+
+.bl-cycle-list {
+    display: grid;
+    gap: .75rem;
+}
+
+.bl-cycle-list li {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: .5rem 1rem;
+    padding: .75rem 0 .75rem 1rem;
+    border-inline-start: 2px solid color-mix(in srgb, var(--primary-500) 45%, transparent);
+    font-size: .875rem;
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 639px) {
+    .bl-commercial-overview,
+    .bl-commercial-summary {
+        grid-template-columns: 1fr;
     }
 }

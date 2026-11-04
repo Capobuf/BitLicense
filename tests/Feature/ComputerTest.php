@@ -69,6 +69,7 @@ class ComputerTest extends TestCase
             ['activated_on' => '2027-02-29'], ['expires_on' => '2026-13-01'],
             ['amount' => '-1'], ['amount' => '1.001'], ['amount' => '1e3'], ['amount' => '1.000,00'],
             ['amount' => 2.50], ['gravityzone_id' => 'forged'], ['company_id' => 2],
+            ['gravityzone_license_status' => 1], ['license_checked_at' => '2026-11-04 10:00:00'], ['license_sync_error' => null],
         ] as $input) {
             $this->assertRejected(fn () => $computer->updateCommercial($input, 1));
             $this->assertSame($before, $computer->refresh()->toArray());

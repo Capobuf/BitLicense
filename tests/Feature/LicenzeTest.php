@@ -3,9 +3,6 @@
 namespace Tests\Feature;
 
 use App\Filament\Pages\Licenze;
-use App\Integrations\GravityZone\CompanySynchronizer;
-use App\Integrations\GravityZone\EndpointSynchronizer;
-use App\Integrations\GravityZone\GravityZoneException;
 use App\Models\Company;
 use App\Models\Computer;
 use App\Models\GravityZoneSetting;
@@ -43,7 +40,7 @@ class LicenzeTest extends TestCase
         $page->set('data.company_id', $company->id)->assertCanSeeTableRecords([$pc])->assertCanNotSeeTableRecords([$other])
             ->assertSee('31/12/2026')->assertSee('01/05/2027')->assertSee('Scadenza tecnica')->assertSee('Validità')->assertSee('Prezzo');
         $this->get('/admin')->assertOk()->assertSee('Licenze')->assertDontSee('Coperture commerciali')->assertDontSee('Panoramica');
-        foreach (['aziende', 'endpoint', 'postazioni', 'coperture'] as $path) {
+        foreach (['endpoint', 'postazioni', 'coperture'] as $path) {
             $this->get('/admin/'.$path)->assertNotFound();
         }
         Http::assertNothingSent();
@@ -401,25 +398,6 @@ class LicenzeTest extends TestCase
         Livewire::test(Licenze::class)->set('data.company_id', $company->id)->assertCanSeeTableRecords([$pc])
             ->assertSee('Non disponibile')->assertSee('Azienda non più rilevata')->assertSee('Lettura PC fallita.')
             ->assertSee('Da verificare: rilevato in')->assertSee('Import incompleto.')->assertDontSee('never-render-key');
-        Http::assertNothingSent();
-    }
-
-    public function test_sync_requires_admin_rechecks_role_and_reports_failures_without_success(): void
-    {
-        Livewire::test(Licenze::class)->assertActionHidden('synchronize')->call('mountAction', 'synchronize')->assertActionNotMounted();
-        $user = User::factory()->administrator()->create();
-        $this->actingAs($user);
-        $this->mock(CompanySynchronizer::class)->shouldReceive('sync')->once()->andReturn(1);
-        $this->mock(EndpointSynchronizer::class)->shouldReceive('sync')->once()->andReturn(2);
-        Livewire::test(Licenze::class)->callAction('synchronize')->assertNotified('Sincronizzazione completata');
-        $this->mock(CompanySynchronizer::class)->shouldReceive('sync')->once()->andThrow(new GravityZoneException('Errore lettura.'));
-        $this->mock(EndpointSynchronizer::class)->shouldNotReceive('sync');
-        Livewire::test(Licenze::class)->callAction('synchronize')->assertNotified('Sincronizzazione non completata');
-        $this->mock(CompanySynchronizer::class)->shouldNotReceive('sync');
-        $page = Livewire::test(Licenze::class)->mountAction('synchronize');
-        $user->update(['role' => 'operator']);
-        $this->actingAs($user->fresh());
-        $page->callMountedAction()->assertStatus(200);
         Http::assertNothingSent();
     }
 

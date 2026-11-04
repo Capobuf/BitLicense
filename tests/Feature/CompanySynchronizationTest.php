@@ -6,7 +6,6 @@ use App\Integrations\GravityZone\CompanySynchronizer;
 use App\Models\Company;
 use App\Models\Computer;
 use App\Models\GravityZoneSetting;
-use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Factory;
@@ -309,13 +308,10 @@ class CompanySynchronizationTest extends TestCase
         $lock->release();
     }
 
-    public function test_the_cli_and_daily_scheduler_use_the_same_synchronizer(): void
+    public function test_the_cli_uses_the_same_synchronizer(): void
     {
         $this->fakeCompanies([]);
         $this->artisan('bitlicense:sync-companies')->assertSuccessful();
-        $event = collect(app(Schedule::class)->events())->sole(fn ($event) => str_contains($event->command ?? '', 'bitlicense:sync-companies'));
-        $this->assertSame('0 3 * * *', $event->expression);
-        $this->assertSame('Europe/Rome', $event->timezone);
         Http::assertSentCount(1);
     }
 

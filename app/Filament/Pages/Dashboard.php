@@ -92,8 +92,13 @@ class Dashboard extends Page
             ];
         }
 
-        $periods = Computer::query()->select(['activated_on', 'expires_on'])
-            ->selectRaw('COUNT(*) AS total')->groupBy('activated_on', 'expires_on')->get();
+        $activation = Computer::commercialDateSql('activated_on');
+        $expiry = Computer::commercialDateSql('expires_on');
+        $periods = Computer::query()->fromSub(
+            Computer::query()->selectRaw("{$activation} AS activated_on, {$expiry} AS expires_on"),
+            'commercial_dates',
+        )->select(['activated_on', 'expires_on'])->selectRaw('COUNT(*) AS total')
+            ->groupBy('activated_on', 'expires_on')->get();
         foreach ($periods as $period) {
             $statuses[$period->commercialStatus()] += (int) $period->total;
             $month = $period->expires_on?->format('Y-m');

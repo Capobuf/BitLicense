@@ -31,6 +31,11 @@ class CompanyLicenses extends Licenze
             ->identifier(fn (): string => 'company'.$this->selectedCompanyId());
     }
 
+    protected function queryString(): array
+    {
+        return [];
+    }
+
     protected function getHeaderActions(): array
     {
         return [$this->createAction()];

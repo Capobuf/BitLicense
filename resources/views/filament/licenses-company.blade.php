@@ -1,14 +1,22 @@
 @if ($company || ! $settings || filled($settings->companies_sync_error) || filled($settings->endpoints_sync_error))
-    <div class="fi-ta-header bl-company-hero">
+    <div @class([
+        'fi-ta-header bl-company-hero',
+        'bl-company-hero-suspended' => $company?->is_suspended === true,
+        'bl-company-hero-expiring' => $company?->is_suspended !== true
+            && $company?->technical_expires_on?->betweenIncluded(today('Europe/Rome'), today('Europe/Rome')->addDays(30)),
+    ])>
         @if ($company)
             <div class="bl-company-license">
                 <div>
-                    @if ($showCompanyName ?? false)
-                        <h2 class="bl-company-name">{{ $company->name }}</h2>
-                    @endif
+                    <h2 class="bl-company-name">
+                        {{ $this->companyRenewalsAction->label($company->name)->link()->color('gray') }}
+                    </h2>
                     <div class="bl-company-license-label">
                         <x-filament::icon icon="heroicon-o-shield-check" class="bl-company-icon" />
                         <span>Licenza Aziendale</span>
+                        @if ($company->is_suspended)
+                            <x-filament::badge color="danger">Sospesa</x-filament::badge>
+                        @endif
                         <x-filament::icon-button
                             icon="heroicon-o-information-circle"
                             color="gray"
@@ -40,8 +48,6 @@
                         {{ $company->technical_expires_on?->format('d/m/Y') ?? 'Non disponibile' }}
                         @if ($company->technical_expires_on?->lt(today('Europe/Rome')))
                             <x-filament::badge color="danger">Scaduta</x-filament::badge>
-                        @elseif ($company->technical_expires_on?->lte(today('Europe/Rome')->addDays(30)))
-                            <x-filament::badge color="warning">In scadenza</x-filament::badge>
                         @endif
                     </dd>
                 </div>
