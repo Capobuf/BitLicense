@@ -60,11 +60,42 @@ class GravityZoneLicenseTest extends TestCase
         $this->assertSame(['technical_license_type' => 'Mensile', 'technical_expires_on' => null, 'technical_product' => null], $this->readLicense());
     }
 
+    public function test_monthly_subscription_uses_the_verified_end_date_instead_of_license_expiry(): void
+    {
+        // Anonymized projection of fields and formats verified live on 2026-11-04.
+        $fixture = file_get_contents(base_path('tests/Fixtures/GravityZone/license-monthly-end.json'));
+        Http::fake(['*' => Http::response($fixture)]);
+
+        $this->assertSame('2027-06-30', $this->readLicense()['technical_expires_on']);
+        Http::assertSentCount(1);
+    }
+
+    public function test_missing_or_null_monthly_end_never_falls_back_to_license_expiry(): void
+    {
+        $license = ['subscriptionType' => 3, 'expiryDate' => '2032-08-20T02:00:00'];
+        Http::fakeSequence()->push($this->envelope($license))
+            ->push($this->envelope($license + ['endSubscription' => null]));
+
+        $this->assertNull($this->readLicense()['technical_expires_on']);
+        $this->assertNull($this->readLicense()['technical_expires_on']);
+        Http::assertSentCount(2);
+    }
+
+    public function test_monthly_end_accepts_a_real_leap_day(): void
+    {
+        Http::fake(['*' => Http::response($this->envelope([
+            'subscriptionType' => 3, 'endSubscription' => '2028-02-29',
+        ]))]);
+
+        $this->assertSame('2028-02-29', $this->readLicense()['technical_expires_on']);
+    }
+
     public function test_only_the_main_license_calendar_date_is_used_without_timezone_conversion(): void
     {
         Http::fake(['*' => Http::response($this->envelope([
             'subscriptionType' => 2,
             'expiryDate' => '2028-02-29T23:59:59',
+            'endSubscription' => '2027-06-30',
             'additionalLicenses' => [['expiryDate' => '2030-01-01T00:00:00', 'licenseKey' => 'private-data']],
         ]))]);
 
@@ -150,6 +181,10 @@ class GravityZoneLicenseTest extends TestCase
 
         foreach (['2027-02-29T12:00:00', '2028-04-31T12:00:00', '2028-02-29T24:00:00', '2028-02-29', '2028-02-29T12:00:00Z', '2028-02-29T12:00:00+01:00', '', 'private-data', 123] as $index => $expiry) {
             $cases['invalid expiry '.$index] = [['subscriptionType' => 2, 'expiryDate' => $expiry]];
+        }
+
+        foreach (['2027-02-29', '2028-04-31', '2028-02-29T00:00:00', '2028-2-29', '', "2027-06-30\0", 'private-data', 123, true, []] as $index => $expiry) {
+            $cases['invalid monthly end '.$index] = [['subscriptionType' => 3, 'endSubscription' => $expiry]];
         }
 
         return $cases;

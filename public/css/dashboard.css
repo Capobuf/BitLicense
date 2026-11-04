@@ -69,7 +69,6 @@
 .bl-dash-legend a > span { display: flex; align-items: center; gap: .5rem; color: var(--dash-muted); }
 .bl-dash-legend i { width: .45rem; height: .45rem; border-radius: 50%; flex-shrink: 0; }
 .bl-dash-legend strong { font-weight: 600; font-variant-numeric: tabular-nums; }
-.bl-dash-caption { color: var(--dash-muted); font-size: .7rem; line-height: 1.6; }
 .bl-dash-bars-scroll { overflow-x: auto; padding: 4px; margin: -4px; }
 .bl-dash-bars { display: grid; grid-template-columns: repeat(var(--months), minmax(3rem, 1fr)); align-items: end; gap: .9rem; height: 215px; padding: 1.5rem 0 1rem; }
 .bl-dash-bars > a { display: block; text-align: center; border-radius: .2rem; font-size: .7rem; font-variant-numeric: tabular-nums; }
@@ -79,7 +78,6 @@
 .bl-dash-donut a:hover { opacity: .7; }
 .bl-dash-controls { display: flex; align-items: end; gap: 1.5rem; flex-wrap: wrap; }
 .bl-dash-controls > div { min-width: 12rem; flex: 1; }
-.bl-dash-controls > p { flex: 2; min-width: 12rem; }
 .bl-dash-controls label { display: block; font-size: .875rem; font-weight: 500; margin-bottom: .5rem; }
 .bl-dash-company-filters { margin-bottom: 1rem; }
 .bl-dash-companies { scroll-margin-top: 5rem; }
@@ -91,11 +89,8 @@
 .bl-dash-company-avatar { width: 2rem; height: 2rem; flex-shrink: 0; color: var(--dash-muted); }
 .bl-dash-company-detail { flex: 1; min-width: 0; }
 .bl-dash-company-detail strong { font-size: .8rem; font-weight: 500; overflow-wrap: anywhere; }
-.bl-dash-company-detail > span, .bl-dash-company-date > span { display: block; margin-top: .2rem; font-size: .65rem; color: var(--dash-muted); }
-.bl-dash-company-date { margin-inline: 1rem; font-size: .75rem; font-variant-numeric: tabular-nums; }
+.bl-dash-company-detail > span { display: block; margin-top: .2rem; font-size: .65rem; color: var(--dash-muted); }
 .bl-dash-company-arrow { width: 1rem; height: 1rem; color: var(--dash-muted); flex-shrink: 0; }
-.bl-dash-company-note { display: flex; align-items: center; gap: .5rem; margin-top: 1rem; }
-.bl-dash-company-note svg { width: 1rem; height: 1rem; flex-shrink: 0; }
 .bl-dash-empty { text-align: center; padding: 2.5rem 1rem; }
 .bl-dash-empty svg { width: 2rem; height: 2rem; margin: 0 auto .75rem; color: var(--dash-muted); }
 .bl-dash-empty h3 { font-size: .875rem; font-weight: 500; }
@@ -124,9 +119,9 @@
     .bl-dash-charts { grid-template-columns: 1fr; }
     .bl-dash-donut { width: 150px; }
     .bl-dash-status-chart { gap: 1.5rem; }
-    .bl-dash-company-row { display: grid; grid-template-columns: 2.3rem minmax(0, 1fr) auto; gap: .7rem; }
+    .bl-dash-company-row { display: grid; grid-template-columns: 2.3rem minmax(0, 1fr); gap: .7rem; }
     .bl-dash-company-detail { grid-column: 2 / -1; }
-    .bl-dash-company-date { grid-column: 2; margin: 0; }
+    .bl-dash-company-row > .fi-badge { grid-column: 2; justify-self: start; }
     .bl-dash-company-arrow { display: none; }
 }
 @media (max-width: 420px) {

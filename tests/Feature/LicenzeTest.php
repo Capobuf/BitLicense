@@ -201,8 +201,21 @@ class LicenzeTest extends TestCase
         $manual = $this->computer($company, ['product' => 'Prodotto precedente']);
         $moved = $this->computer($company, ['gravityzone_id' => 'remote-moved', 'gravityzone_company_id' => $other->id]);
         $page = Livewire::test(Licenze::class)->set('data.company_id', $company->id)
+            ->assertCanRenderTableColumn('company_product')
             ->assertTableColumnStateSet('company_product', 'Endpoint Security · MSP Secure', $manual)
             ->assertTableColumnStateSet('company_product', 'Bitdefender EDR', $moved)
+            ->assertSee('Endpoint Security · MSP Secure')->assertSee('Bitdefender EDR');
+        $columns = $page->get('tableColumns');
+        foreach ($columns as &$column) {
+            if ($column['name'] === 'company_product') {
+                $column['isToggleable'] = true;
+                $column['isToggled'] = false;
+                $column['isToggledHiddenByDefault'] = true;
+            }
+        }
+        session()->put($page->instance()->getTableColumnsSessionKey(), $columns);
+        $page = Livewire::test(Licenze::class)->set('data.company_id', $company->id)
+            ->assertCanRenderTableColumn('company_product')
             ->mountAction(TestAction::make('edit')->table($manual))->assertFormFieldDoesNotExist('product');
         $html = $page->instance()->mountedActionSchema0->toHtml();
         $this->assertStringContainsString('Endpoint Security · MSP Secure', $html);

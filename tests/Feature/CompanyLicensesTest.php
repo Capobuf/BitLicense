@@ -9,6 +9,7 @@ use App\Models\Computer;
 use App\Models\User;
 use Filament\Actions\Testing\TestAction;
 use Filament\Facades\Filament;
+use Filament\Forms\Components\Select;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Livewire\Features\SupportLockedProperties\CannotUpdateLockedPropertyException;
@@ -47,6 +48,7 @@ class CompanyLicensesTest extends TestCase
         $pc = Computer::create(['company_id' => $company->id, 'name' => 'PC prima']);
         $foreign = Computer::create(['company_id' => $other->id, 'name' => 'PC seconda']);
         $first = Livewire::test(CompanyLicenses::class, ['companyId' => $company->id])
+            ->assertCanRenderTableColumn('company_product')
             ->assertCanSeeTableRecords([$pc])->assertCanNotSeeTableRecords([$foreign])
             ->searchTable('Nessuna corrispondenza')->assertCountTableRecords(0);
         $second = Livewire::test(CompanyLicenses::class, ['companyId' => $other->id])
@@ -74,6 +76,48 @@ class CompanyLicensesTest extends TestCase
 
         $this->expectException(CannotUpdateLockedPropertyException::class);
         $page->set('data.company_id', $other->id);
+    }
+
+    public function test_license_selector_shows_all_matching_companies_and_limits_the_company_options_without_api_calls(): void
+    {
+        $first = $this->company('Prima');
+        $second = $this->company('Seconda');
+        $other = $this->company('Altra');
+        $unknown = $this->company('Sconosciuta');
+        foreach ([$first, $second] as $company) {
+            $company->forceFill(['technical_product' => 'Endpoint Security · MSP Secure'])->save();
+        }
+        $other->forceFill(['technical_product' => 'Bitdefender EDR'])->save();
+        $pcs = [];
+        foreach ([$first, $second, $other, $unknown] as $company) {
+            $pcs[] = Computer::create(['company_id' => $company->id, 'name' => 'PC filtro '.$company->id]);
+        }
+        $before = Computer::orderBy('id')->get()->toArray();
+        $page = Livewire::test(Licenze::class)->set('data.company_id', $other->id)
+            ->set('data.license', 'Endpoint Security · MSP Secure')->assertSet('data.company_id', 'all')
+            ->assertActionHidden('create')->assertSee($pcs[0]->name)->assertSee($pcs[1]->name)
+            ->assertDontSee($pcs[2]->name)->assertDontSee($pcs[3]->name)
+            ->assertFormFieldExists('company_id', function (Select $field) use ($first, $second): bool {
+                $this->assertSame(['all', $first->id, $second->id], array_keys($field->getOptions()));
+                $this->assertSame([], $field->getSearchResults('Altra'));
+
+                return true;
+            })
+            ->assertFormFieldExists('license', fn (Select $field): bool => array_keys($field->getOptions()) === ['Bitdefender EDR', 'Endpoint Security · MSP Secure']);
+        $page->set('data.company_id', $first->id)->assertCanSeeTableRecords([$pcs[0]])->assertCountTableRecords(1);
+        $page->set('data.license', 'Bitdefender EDR')->assertSet('data.company_id', 'all')
+            ->assertSee($pcs[2]->name)->assertDontSee($pcs[0]->name)->assertDontSee($pcs[1]->name)->assertDontSee($pcs[3]->name);
+        $page->set('data.license', null)->assertSet('data.company_id', 'all')->assertSee($pcs[3]->name)
+            ->assertFormFieldExists('company_id', fn (Select $field): bool => count($field->getOptions()) === 5);
+        $page->set('data.license', 'Prodotto non presente')->assertSee('Nessuna azienda da mostrare.');
+        $this->assertSame($before, Computer::orderBy('id')->get()->toArray());
+        Http::assertNothingSent();
+    }
+
+    public function test_malformed_license_filter_is_rejected_without_query_errors(): void
+    {
+        Livewire::test(Licenze::class)->set('data.license', ['Bitdefender EDR'])->assertStatus(422);
+        Http::assertNothingSent();
     }
 
     public function test_disabled_users_cannot_open_or_save_an_embedded_table(): void

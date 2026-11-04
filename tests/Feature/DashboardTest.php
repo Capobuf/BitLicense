@@ -12,6 +12,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Js;
 use Livewire\Livewire;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
@@ -71,10 +72,10 @@ class DashboardTest extends TestCase
         }
 
         $page = Livewire::test(Dashboard::class);
-        $this->assertSame(['total' => 5, 'expired' => 1, 'expiring' => 2, 'unknown' => 1],
+        $this->assertSame(['total' => 5, 'expired' => 1, 'expiring' => 2],
             array_map('intval', (array) $page->viewData('companyTotals')));
         $this->assertSame(['Attiva' => 2, 'In scadenza' => 2, 'Scaduta' => 1, 'Da completare' => 3, 'Da attivare' => 1], $page->viewData('statuses'));
-        $this->assertSame([$expired->id, $today->id, $boundary->id], $page->viewData('companies')->pluck('id')->all());
+        $this->assertSame([$today->id, $boundary->id], $page->viewData('companies')->pluck('id')->all());
     }
 
     public function test_absent_computers_and_remote_company_moves_keep_their_local_ownership_and_dates(): void
@@ -195,21 +196,23 @@ class DashboardTest extends TestCase
         $this->computer($boundary, ['activated_on' => $today, 'expires_on' => $horizon]);
         $this->computer($outside, ['expires_on' => $followingDay]);
 
-        $page = Livewire::test(Dashboard::class)->set('period', $period);
+        $page = Livewire::test(Dashboard::class)->set('period', $period)->set('companyState', $period);
         $this->assertSame($horizon, $page->viewData('horizon')->toDateString());
         $this->assertSame(1, (int) $page->viewData('companyTotals')->expiring);
         $this->assertSame([$boundary->id], $page->viewData('companies')->pluck('id')->all());
         $this->assertSame(1, array_sum(array_column($page->viewData('months'), 'count')));
         $this->assertSame(substr($horizon, 0, 7), array_key_last($page->viewData('months')));
-        $this->assertSame($period === '30' ? 1 : 0, $page->viewData('statuses')['In scadenza']);
+        $this->assertSame(in_array($period, ['15', '30'], true) ? 1 : 0, $page->viewData('statuses')['In scadenza']);
     }
 
     public static function expiryHorizons(): array
     {
         return [
+            ['2026-08-31', '15', '2026-09-15'],
             ['2026-08-31', '30', '2026-09-30'],
             ['2026-08-31', '60', '2026-10-30'],
-            ['2026-08-31', '90', '2026-11-29'],
+            ['2026-08-31', '3m', '2026-11-30'],
+            ['2026-11-30', '3m', '2027-02-28'],
             ['2026-08-31', '6m', '2027-02-28'],
             ['2026-08-31', '1y', '2027-08-31'],
             ['2028-02-29', '1y', '2029-02-28'],
@@ -225,18 +228,17 @@ class DashboardTest extends TestCase
         $target = $this->company(['name' => 'Ricerca dedicata', 'technical_expires_on' => '2026-12-03']);
         $future = $this->company(['technical_expires_on' => '2027-01-01']);
         $unknown = $this->company();
-        $page = Livewire::test(Dashboard::class)->call('nextPage')->set('companySearch', 'Ricerca');
+        $page = Livewire::test(Dashboard::class)->set('companyState', 'all')->call('nextPage')->set('companySearch', 'Ricerca');
         $this->assertSame(1, $page->viewData('companies')->currentPage());
         $this->assertSame([$target->id], $page->viewData('companies')->pluck('id')->all());
-        $this->assertSame(['total' => 11, 'expired' => 8, 'expiring' => 1, 'unknown' => 1],
+        $this->assertSame(['total' => 11, 'expired' => 8, 'expiring' => 1],
             array_map('intval', (array) $page->viewData('companyTotals')));
 
         $page->set('companySearch', '')->call('nextPage')->set('companyState', 'expired');
         $this->assertSame(1, $page->viewData('companies')->currentPage());
         $this->assertSame(8, $page->viewData('companies')->total());
-        $page->call('nextPage')->set('period', '90');
+        $page->call('nextPage')->set('companyState', '3m');
         $this->assertSame(1, $page->viewData('companies')->currentPage());
-        $page->set('companyState', 'expiring');
         $this->assertSame([$target->id, $future->id], $page->viewData('companies')->pluck('id')->all());
         $page->set('companyState', 'all')->set('companySearch', $unknown->name);
         $this->assertSame([$unknown->id], $page->viewData('companies')->pluck('id')->all());
@@ -246,15 +248,88 @@ class DashboardTest extends TestCase
         Mail::assertNothingOutgoing();
     }
 
+    public function test_company_and_chart_periods_are_independent_and_only_company_filters_reset_pagination(): void
+    {
+        $this->actingAs(User::factory()->create());
+        $expired = $this->company(['technical_expires_on' => '2026-11-02']);
+        $unknown = $this->company(['name' => 'Senza data tecnica']);
+        $today = $this->company(['technical_expires_on' => '2026-11-03']);
+        for ($i = 0; $i < 7; $i++) {
+            $this->company(['technical_expires_on' => '2026-11-18']);
+        }
+        $outside = $this->company(['technical_expires_on' => '2026-11-19']);
+        $this->computer($today, ['expires_on' => '2027-01-01']);
+
+        $page = Livewire::test(Dashboard::class)->set('companyState', '15');
+        $this->assertSame(8, $page->viewData('companies')->total());
+        $this->assertSame(8, (int) $page->viewData('companyTotals')->expiring);
+        $this->assertSame('2026-11-18', $page->viewData('companyHorizon')->toDateString());
+        $page->call('nextPage');
+        $ids = $page->viewData('companies')->pluck('id')->all();
+        $page->set('period', '1y');
+        $this->assertSame(2, $page->viewData('companies')->currentPage());
+        $this->assertSame($ids, $page->viewData('companies')->pluck('id')->all());
+        $this->assertSame(8, (int) $page->viewData('companyTotals')->expiring);
+        $months = $page->viewData('months');
+        $this->assertSame(1, $months['2027-01']['count']);
+        $statuses = $page->viewData('statuses');
+
+        $page->set('companyState', '60');
+        $this->assertSame(1, $page->viewData('companies')->currentPage());
+        $this->assertSame(9, $page->viewData('companies')->total());
+        $this->assertSame($months, $page->viewData('months'));
+        $this->assertSame($statuses, $page->viewData('statuses'));
+        $page->set('companyState', 'expired');
+        $this->assertSame([$expired->id], $page->viewData('companies')->pluck('id')->all());
+        $page->set('companyState', 'all');
+        $this->assertSame(11, $page->viewData('companies')->total());
+        $page->set('companySearch', $unknown->name);
+        $this->assertSame([$unknown->id], $page->viewData('companies')->pluck('id')->all());
+        $page->set('companySearch', $outside->name);
+        $this->assertSame([$outside->id], $page->viewData('companies')->pluck('id')->all());
+    }
+
+    #[DataProvider('companyExpiryBadges')]
+    public function test_company_expiry_badges_use_days_months_years_and_an_exact_date_tooltip(?string $expiry, string $label): void
+    {
+        $this->actingAs(User::factory()->create());
+        $company = $this->company(['technical_expires_on' => $expiry]);
+        $page = Livewire::withQueryParams(['companyState' => 'all'])->test(Dashboard::class)
+            ->assertSee($label);
+        if ($expiry !== null) {
+            $page->assertSee('x-tooltip', false)
+                ->assertSee((string) Js::from($company->technical_expires_on->format('d/m/Y')), false);
+        }
+    }
+
+    public static function companyExpiryBadges(): array
+    {
+        return [
+            [null, 'Data mancante'],
+            ['2026-11-03', 'Scade oggi'],
+            ['2026-11-04', 'Tra 1 giorno'],
+            ['2026-11-18', 'Tra 15 giorni'],
+            ['2026-12-02', 'Tra 29 giorni'],
+            ['2026-12-03', 'Tra 1 mese'],
+            ['2027-05-03', 'Tra 6 mesi'],
+            ['2027-11-02', 'Tra 11 mesi'],
+            ['2027-11-03', 'Tra 1 anno'],
+            ['2030-07-14', 'Tra 3 anni'],
+            ['2026-11-02', 'Scaduta da 1 giorno'],
+            ['2026-10-03', 'Scaduta da 1 mese'],
+            ['2025-11-03', 'Scaduta da 1 anno'],
+        ];
+    }
+
     public function test_dashboard_validates_query_parameters_and_livewire_filters(): void
     {
         $this->actingAs(User::factory()->create());
-        Livewire::withQueryParams(['period' => '90', 'companyState' => 'all'])->test(Dashboard::class)
-            ->assertSet('period', '90')->assertSet('companyState', 'all');
+        Livewire::withQueryParams(['period' => '3m', 'companyState' => 'all'])->test(Dashboard::class)
+            ->assertSet('period', '3m')->assertSet('companyState', 'all');
         foreach (['period' => 'forever', 'companyState' => 'invalid', 'companySearch' => str_repeat('x', 256)] as $field => $value) {
             Livewire::test(Dashboard::class)->set($field, $value)->assertStatus(422);
         }
-        foreach ([['period' => 'forever'], ['period' => ['30']], ['companyState' => 'invalid']] as $query) {
+        foreach ([['period' => 'forever'], ['period' => ['30']], ['companyState' => 'invalid'], ['companyState' => ['30']]] as $query) {
             $this->get('/admin/dashboard?'.http_build_query($query))->assertStatus(422);
         }
     }

@@ -104,6 +104,23 @@ class GravityZoneInventoryTest extends TestCase
         $this->assertStringNotContainsString('private-data', json_encode($endpoints));
     }
 
+    public function test_partner_inventory_ignores_only_explicitly_known_other_companies(): void
+    {
+        $this->fakeInventory([
+            $this->item(['id' => 'own-endpoint']),
+            $this->item(['id' => 'client-endpoint', 'companyId' => 'known-client']),
+        ]);
+        $items = $this->readInventory('company-1', ['known-client']);
+        $this->assertSame(['own-endpoint'], array_column($items, 'id'));
+    }
+
+    public function test_unknown_companies_are_still_rejected_in_partner_inventory(): void
+    {
+        $this->fakeInventory([$this->item(['companyId' => 'unknown-client'])]);
+        $this->expectException(GravityZoneException::class);
+        $this->readInventory('company-1', ['known-client']);
+    }
+
     #[DataProvider('invalidPages')]
     public function test_invalid_pages_fail_without_returning_a_partial_inventory(array $changes): void
     {
@@ -251,11 +268,11 @@ class GravityZoneInventoryTest extends TestCase
         ]];
     }
 
-    private function readInventory(string $companyId = 'company-1'): array
+    private function readInventory(string $companyId = 'company-1', array $otherCompanyIds = []): array
     {
         return app(GravityZoneClient::class)->getNetworkInventoryItems(new GravityZoneSetting([
             'api_url' => self::API_URL, 'api_key' => self::TEST_KEY,
-        ]), $companyId);
+        ]), $companyId, $otherCompanyIds);
     }
 
     private function assertSanitizedFailure(): GravityZoneException

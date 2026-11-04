@@ -23,28 +23,12 @@
             </div>
         </section>
 
-        <x-filament::section>
-            <div class="bl-dash-controls">
-                <div>
-                    <label for="dashboard-period">Periodo scadenze</label>
-                    <x-filament::input.wrapper>
-                        <x-filament::input.select id="dashboard-period" wire:model.live="period">
-                            @foreach (\App\Filament\Pages\Dashboard::PERIODS as $value => $label)
-                                <option value="{{ $value }}">{{ $label }}</option>
-                            @endforeach
-                        </x-filament::input.select>
-                    </x-filament::input.wrapper>
-                </div>
-                <p class="bl-dash-caption">Dal {{ $today->format('d/m/Y') }} al {{ $horizon->format('d/m/Y') }}, inclusi.<br>Il periodo filtra le scadenze tecniche delle aziende e il grafico delle scadenze commerciali.</p>
-            </div>
-        </x-filament::section>
-
         <div class="bl-dash-metrics" role="group" aria-label="Riepilogo generale">
             {{ $stats }}
         </div>
 
         <div class="bl-dash-charts">
-            <x-filament::section class="bl-dash-card" heading="Stato delle licenze" description="Computer · Dati commerciali" icon="heroicon-o-chart-pie">
+            <x-filament::section class="bl-dash-card" heading="Stato delle licenze" icon="heroicon-o-chart-pie">
                 <div class="bl-dash-status-chart">
                     <div class="bl-dash-donut" aria-hidden="true">
                         <svg viewBox="0 0 120 120">
@@ -66,11 +50,18 @@
                         @endforeach
                     </ul>
                 </div>
-                <p class="bl-dash-caption">{{ $computerTotal ? 'Clicca uno stato per aprire i PC. “In scadenza” indica sempre i prossimi 30 giorni, incluso oggi, indipendentemente dal periodo selezionato.' : 'Nessun computer presente. I grafici si popoleranno con i tuoi dati.' }}</p>
             </x-filament::section>
 
-            <x-filament::section class="bl-dash-card" heading="Scadenze in arrivo" description="Computer · Date commerciali registrate" icon="heroicon-o-chart-bar">
-                <x-slot name="afterHeader"><x-filament::badge color="gray">{{ $periodLabel }}</x-filament::badge></x-slot>
+            <x-filament::section class="bl-dash-card" heading="Scadenze in arrivo" icon="heroicon-o-chart-bar">
+                <x-slot name="afterHeader">
+                    <x-filament::input.wrapper>
+                        <x-filament::input.select id="dashboard-period" aria-label="Periodo scadenze dei computer" wire:model.live="period">
+                            @foreach (\App\Filament\Pages\Dashboard::PERIODS as $value => $label)
+                                <option value="{{ $value }}">{{ $label }}</option>
+                            @endforeach
+                        </x-filament::input.select>
+                    </x-filament::input.wrapper>
+                </x-slot>
                 <div class="bl-dash-bars-scroll">
                     <div class="bl-dash-bars" style="--months: {{ count($months) }}" role="group" aria-label="Computer per mese di scadenza commerciale, clicca per aprire Licenze">
                         @foreach ($months as $month)
@@ -82,13 +73,10 @@
                         @endforeach
                     </div>
                 </div>
-                <p class="bl-dash-caption">Dal {{ $today->format('d/m/Y') }} al {{ $horizon->format('d/m/Y') }}. Clicca un mese per vedere i PC. Include le scadenze note anche se manca l’attivazione.</p>
             </x-filament::section>
         </div>
 
-        <x-filament::section class="bl-dash-card bl-dash-companies" id="companies" heading="Scadenze tecniche delle aziende" icon="heroicon-o-building-office-2"
-            description="GravityZone · Indipendenti dalle date commerciali dei PC. Clicca un’azienda per aprire Licenze.">
-            <x-slot name="afterHeader"><x-filament::badge color="gray">{{ $companies->total() }} aziende</x-filament::badge></x-slot>
+        <x-filament::section class="bl-dash-card bl-dash-companies" id="companies" heading="Scadenze tecniche delle aziende" icon="heroicon-o-building-office-2">
             <div class="bl-dash-controls bl-dash-company-filters">
                 <div>
                     <label for="dashboard-company-search">Cerca azienda</label>
@@ -97,7 +85,7 @@
                     </x-filament::input.wrapper>
                 </div>
                 <div>
-                    <label for="dashboard-company-state">Mostra aziende</label>
+                    <label for="dashboard-company-state">In Scadenza</label>
                     <x-filament::input.wrapper>
                         <x-filament::input.select id="dashboard-company-state" wire:model.live="companyState">
                             @foreach (\App\Filament\Pages\Dashboard::COMPANY_STATES as $value => $label)
@@ -110,15 +98,18 @@
             @if ($companies->isNotEmpty())
                 <div class="bl-dash-company-list">
                     @foreach ($companies as $company)
-                        @php $days = $company->technical_expires_on ? (int) $today->diffInDays($company->technical_expires_on, false) : null; @endphp
+                        @php
+                            $days = $company->technical_expires_on ? (int) $today->diffInDays($company->technical_expires_on, false) : null;
+                            $distance = $company->technical_expires_on?->locale('it')->diffForHumans($today, ['syntax' => \Carbon\CarbonInterface::DIFF_ABSOLUTE, 'skip' => ['week']]);
+                        @endphp
                         <a class="bl-dash-company-row" href="{{ \App\Filament\Pages\Licenze::getUrl(['company' => $company->id]) }}">
                             <x-filament::icon icon="heroicon-o-building-office-2" class="bl-dash-company-avatar" />
                             <span class="bl-dash-company-detail"><strong>{{ $company->name }}</strong><span>{{ $company->computers_count }} computer
                                 @if (! $company->is_present) · Non più rilevata @elseif ($company->is_suspended) · Sospesa @endif
                                 @if ($company->sync_error) · Dati da verificare @endif
+                                @if ($company->gravityzone_type === 0 && $company->can_manage_security === false) · Sicurezza non condivisa @endif
                             </span></span>
-                            <span class="bl-dash-company-date">@if ($company->technical_expires_on)<time datetime="{{ $company->technical_expires_on->toDateString() }}">{{ $company->technical_expires_on->format('d/m/Y') }}</time>@else Non disponibile @endif<span>Scadenza tecnica</span></span>
-                            <x-filament::badge :color="$days === null ? 'gray' : ($days < 0 ? 'danger' : ($company->technical_expires_on->lte($horizon) ? 'warning' : 'success'))">{{ $days === null ? 'Data mancante' : ($days < 0 ? 'Scaduta da '.abs($days).' g' : ($days === 0 ? 'Scade oggi' : 'Tra '.$days.' giorni')) }}</x-filament::badge>
+                            <x-filament::badge :tooltip="$company->technical_expires_on?->format('d/m/Y')" :color="$days === null ? 'gray' : ($days < 0 ? 'danger' : ($company->technical_expires_on->lte($companyHorizon) ? 'warning' : 'success'))">{{ $days === null ? 'Data mancante' : ($days < 0 ? 'Scaduta da '.$distance : ($days === 0 ? 'Scade oggi' : 'Tra '.$distance)) }}</x-filament::badge>
                             <x-filament::icon icon="heroicon-o-arrow-up-right" class="bl-dash-company-arrow" />
                         </a>
                     @endforeach
@@ -129,7 +120,6 @@
             @else
                 <div class="bl-dash-empty"><x-filament::icon icon="heroicon-o-calendar-days" /><h3>{{ $companyTotals->total ? 'Nessuna azienda corrisponde ai filtri' : 'La tua panoramica parte da qui' }}</h3><p>{{ $companyTotals->total ? 'Modifica la ricerca, il periodo o scegli Tutte le aziende.' : 'Le aziende compariranno qui dopo la prima importazione da GravityZone.' }}</p></div>
             @endif
-            <p class="bl-dash-caption bl-dash-company-note"><x-filament::icon icon="heroicon-o-information-circle" />Scadenza tecnica non disponibile: {{ (int) $companyTotals->unknown }}. Per vederle scegli “Tutte le aziende”.</p>
         </x-filament::section>
         <p class="bl-dash-footer">Panoramica dei dati locali disponibili · Le date tecniche e commerciali restano indipendenti.</p>
     </div>

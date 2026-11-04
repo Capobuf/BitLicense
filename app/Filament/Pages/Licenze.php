@@ -102,15 +102,15 @@ class Licenze extends Dashboard implements HasTable
             EmbeddedTable::make()->hidden(fn (): bool => ($this->data['company_id'] ?? null) === 'all'),
             View::make('filament.all-companies')
                 ->visible(fn (): bool => ($this->data['company_id'] ?? null) === 'all')
-                ->viewData(fn (): array => ['companies' => Company::query()->orderBy('name')->get(['id'])]),
+                ->viewData(fn (): array => ['companies' => $this->companiesQuery()->orderBy('name')->get(['id'])]),
         ]);
     }
 
     public function form(Schema $schema): Schema
     {
-        return $schema->statePath('data')->components([
+        return $schema->statePath('data')->columns(['default' => 1, 'md' => 2])->components([
             Select::make('company_id')->label('Azienda')->placeholder('Cerca e scegli un’azienda')->searchable()->live()->allowHtml()->wrapOptionLabels()
-                ->options(fn (): array => ['all' => view('filament.company-option', ['company' => null])->render()] + Company::query()
+                ->options(fn (): array => ['all' => view('filament.company-option', ['company' => null])->render()] + $this->companiesQuery()
                     ->orderBy('name')->get(['id', 'name', 'is_suspended', 'is_present', 'sync_error', 'technical_expires_on'])
                     ->mapWithKeys(fn (Company $company): array => [$company->id => view('filament.company-option', ['company' => $company])->render()])->all())
                 ->getSearchResultsUsing(fn (Select $component, string $search): array => array_filter($component->getOptions(),
@@ -121,7 +121,19 @@ class Licenze extends Dashboard implements HasTable
                     $this->resetTableSearch();
                     $this->removeTableFilters();
                 }),
+            Select::make('license')->label('Licenza')->placeholder('Tutte le licenze')->searchable()->live()
+                ->options(fn (): array => Company::query()->whereNotNull('technical_product')->where('technical_product', '!=', '')
+                    ->distinct()->orderBy('technical_product')->pluck('technical_product', 'technical_product')->all())
+                ->afterStateUpdated(fn (Set $set) => $set('company_id', 'all', shouldCallUpdatedHooks: true)),
         ]);
+    }
+
+    private function companiesQuery(): Builder
+    {
+        $license = $this->data['license'] ?? null;
+        abort_if($license !== null && (! is_string($license) || mb_strlen($license) > 255), 422);
+
+        return Company::query()->when(filled($license), fn (Builder $query): Builder => $query->where('technical_product', $license));
     }
 
     public function table(Table $table): Table
@@ -154,6 +166,8 @@ class Licenze extends Dashboard implements HasTable
                     ->description(fn (Computer $record): string => $record->commercialStatus().' · '.($record->gravityzone_id === null ? 'Manuale' : ($record->gravityzone_company_id !== $record->company_id
                         ? 'Da verificare: rilevato in '.$record->gravityzoneCompany?->name
                         : ($record->is_present ? 'GravityZone' : 'Non più rilevato · dati conservati')))),
+                TextColumn::make('company_product')->label('Licenza')->placeholder('Non fornito dall’API')->wrap()
+                    ->tooltip('Licenza aziendale GravityZone'),
                 ViewColumn::make('validity')->label('Validità')->view('filament.computer-validity')
                     ->sortable(query: fn (Builder $query, string $direction): Builder => $query->orderBy('expires_on', $direction))->toggleable(),
                 TextColumn::make('price_cents')->label('Prezzo')->sortable()->placeholder('Non indicato')
@@ -162,7 +176,6 @@ class Licenze extends Dashboard implements HasTable
                     ->visible(fn (): bool => $this->referenceColumns['quote_reference']),
                 TextColumn::make('invoice_reference')->label('Rif. Fattura')->wrap()->placeholder('—')
                     ->visible(fn (): bool => $this->referenceColumns['invoice_reference']),
-                TextColumn::make('company_product')->label('Prodotto aziendale')->placeholder('Non fornito dall’API')->wrap()->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('notes')->label('Note')->wrap()->limit(80)->tooltip(fn (Computer $record): ?string => $record->notes)
                     ->placeholder('Nessuna nota')->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('platform')->label('Sistema Operativo')->wrap()->placeholder('Non disponibile')->toggleable(isToggledHiddenByDefault: true),

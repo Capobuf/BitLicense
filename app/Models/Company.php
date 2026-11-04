@@ -18,6 +18,8 @@ class Company extends Model
             'last_seen_at' => 'datetime',
             'is_present' => 'boolean',
             'is_suspended' => 'boolean',
+            'gravityzone_type' => 'integer',
+            'can_manage_security' => 'boolean',
         ];
     }
 }

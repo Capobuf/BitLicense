@@ -1,0 +1,10 @@
+{
+    "id": "103d7b05-ec02-481b-9ed6-c07b97de2b7a",
+    "jsonrpc": "2.0",
+    "result": {
+        "subscriptionType": 3,
+        "expiryDate": "2032-08-20T02:00:00",
+        "endSubscription": "2027-06-30",
+        "autoRenewPeriod": 0
+    }
+}

@@ -92,10 +92,17 @@ e stato. Il riepilogo tecnico resta separato dalle date locali delle righe PC.
 alfabetico, con nome, riepilogo e controlli propri. Il pulsante **Aggiungi PC
 manuale** di ciascuna tabella usa quella azienda.
 
+Il filtro **Licenza**, accanto ad Azienda, mostra tutte le aziende con il
+prodotto aziendale GravityZone selezionato e restringe le opzioni del selettore
+aziendale. Svuotandolo si torna a tutte le licenze, anche quelle sconosciute.
+
 Un nuovo computer GravityZone compare automaticamente come **Da completare**.
 La matita o il clic sulla riga apre la modale di modifica, senza espansioni. Nome tecnico e prodotto aziendale
 sono in sola lettura; date, prezzo, riferimenti fattura/preventivo e note sono
 modificabili e facoltativi. **Salva** aggiorna direttamente quel computer.
+La colonna **Licenza** mostra sempre il prodotto aziendale GravityZone per
+ogni PC, anche nelle tabelle di **Tutte le Aziende**; se manca, compare
+**Non fornito dall’API**. Il tooltip chiarisce che è la licenza aziendale.
 La colonna **Validità** mostra attivazione sopra e scadenza sotto. **Prezzo**
 resta visibile; **Rif. Preventivo** e **Rif. Fattura** compaiono solo quando
 almeno un computer dell’azienda ha il rispettivo valore. Le icone di filtri e
@@ -129,20 +136,30 @@ Statistiche, sezioni e badge usano i componenti nativi Filament; fuori dalla her
 la dashboard segue la palette del pannello, anche per i grafici.
 Non richiede build frontend, librerie grafiche o chiamate esterne.
 
-Il selettore **Periodo scadenze** offre 30, 60, 90 giorni, 6 mesi e 1 anno:
-oggi e il giorno finale sono inclusi; mesi e anni sono di calendario, senza
-oltrepassare l’ultimo giorno del mese quando manca il giorno corrispondente.
-I contatori aziendali e l’elenco paginato usano la **scadenza tecnica GravityZone**.
-Puoi cercare per nome e mostrare aziende scadute, in scadenza nel periodo,
-entrambe oppure tutte (anche con data sconosciuta). La ricerca riguarda l’elenco;
-contatori e grafici restano globali. I record non più rilevati restano segnalati.
-I contatori aziendali aprono l’elenco filtrato; il clic sull’azienda apre Licenze
-con quella selezione (`/admin?company=ID`). Il totale computer apre tutte le aziende.
+Il selettore **In Scadenza** nell’elenco offre scadenze entro 15, 30 e 60
+giorni, 3 mesi, 6 mesi e 1 anno, oltre a **Scadute** e **Tutte le aziende**
+(anche con data sconosciuta). Oggi e il giorno finale sono inclusi; mesi e anni
+sono di calendario, senza oltrepassare l’ultimo giorno del mese quando manca
+il giorno corrispondente. La vista iniziale mostra le aziende in scadenza entro
+30 giorni. La ricerca per nome riguarda solo l’elenco.
+I contatori aziendali usano la **scadenza tecnica GravityZone**: quello delle
+aziende in scadenza segue il periodo aziendale selezionato, oppure 30 giorni
+quando si mostrano scadute o tutte le aziende. I record non più rilevati
+restano segnalati. I contatori aprono l’elenco corrispondente; il clic
+sull’azienda apre Licenze con quella selezione (`/admin?company=ID`).
+Per i mensili la data aziendale è la fine abbonamento `endSubscription`,
+visibile con l’etichetta **Fine abbonamento** nel riepilogo di Licenze; se manca, è
+**Non disponibile**. Gli altri tipi usano `expiryDate`. La distinzione
+riguarda soltanto la scadenza aziendale letta da GravityZone.
+Il totale computer apre tutte le aziende. I badge aziendali mostrano la distanza
+in giorni, poi in mesi e anni interi, con la data esatta nel tooltip.
 
 I grafici descrivono invece i **computer e le date commerciali locali**.
 Cliccando uno stato si apre Licenze con quel filtro: «In scadenza» mantiene la
 definizione operativa a 30 giorni, indipendentemente dal periodo scelto.
-Il grafico mensile usa il periodo selezionato e include le scadenze note anche
+Il grafico mensile ha un selettore autonomo nella propria intestazione, con
+gli stessi sei intervalli. Il suo periodo non modifica l’elenco aziende o i
+contatori tecnici. Include le scadenze note anche
 senza attivazione; questi PC restano «Da completare» nel grafico degli stati.
 Ogni barra apre Licenze con le date del mese limitate al periodo scelto.
 Le tabelle mostrano il filtro applicato, modificabile o rimovibile da Filament.
@@ -155,6 +172,13 @@ L’apertura non sincronizza, invia email o modifica dati.
 legge prima aziende e licenze tecniche, poi l’inventario computer. Le chiavi
 richiedono i permessi di lettura Network e Licensing. Gli operatori possono
 modificare i dati locali ma non avviare questa lettura né accedere alle credenziali.
+
+Se l’account vede dei partner, l’importazione segue anche i loro clienti e gli
+eventuali partner annidati per cui è condivisa la gestione della sicurezza.
+Ogni cliente compare come azienda distinta, con i propri PC. Un partner non
+condiviso resta visibile con un avviso; i suoi clienti e il suo inventario
+non sono leggibili con quell’accesso. Un errore durante la scoperta conserva
+i clienti precedenti invece di dichiararli assenti.
 
 Il sincronizzatore conserva date, prodotto, prezzo, riferimenti, note e storico
 locali. Riconosce i computer dall’ID GravityZone, mai dal nome. Rinomina, assenza

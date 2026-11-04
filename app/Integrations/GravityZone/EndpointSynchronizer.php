@@ -44,6 +44,12 @@ class EndpointSynchronizer
             $companies = Company::query()->where('is_present', true)->orderBy('id')->get();
 
             foreach ($companies as $company) {
+                if ($company->gravityzone_type === 0 && $company->can_manage_security === false) {
+                    $company->forceFill(['endpoints_sync_error' => null])->save();
+
+                    continue;
+                }
+
                 $company->forceFill([
                     'endpoints_sync_attempted_at' => now(),
                     'endpoints_sync_error' => 'L’ultimo tentativo non è ancora stato completato.',
@@ -54,7 +60,10 @@ class EndpointSynchronizer
                         throw new GravityZoneException($interruptedBy);
                     }
 
-                    $items = app(GravityZoneClient::class)->getNetworkInventoryItems($settings, $company->gravityzone_id);
+                    $items = app(GravityZoneClient::class)->getNetworkInventoryItems(
+                        $settings, $company->gravityzone_id,
+                        $company->gravityzone_type === 0 ? $companies->pluck('gravityzone_id')->all() : [],
+                    );
                     $inventories[$company->id] = $items;
 
                     foreach ($items as $item) {

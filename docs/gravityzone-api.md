@@ -1,6 +1,6 @@
 # Contratto GravityZone verificato
 
-Verifica documentale: 3 novembre 2026. Il client espone soltanto quattro letture
+Verifica documentale: 4 novembre 2026. Il client espone soltanto quattro letture
 esplicite: `getCompaniesList`, `getNetworkInventoryItems` (Network),
 `getLicenseInfo` (Licensing) e `getCompanyDetails` (Companies).
 Non contiene un invocatore RPC generico o metodi che modificano GravityZone.
@@ -14,20 +14,29 @@ Fonte: [esempi API](https://www.bitdefender.com/business/support/en/77211-141188
 
 ## Aziende
 
-`getCompaniesList` usa `/v1.0/jsonrpc/network` e `params: []`. Il risultato
+`getCompaniesList` usa `/v1.0/jsonrpc/network`: `params: []` per le radici e
+`params: {parentId: ID}` per i clienti di un partner accessibile. Il risultato
 è una lista, anche vuota, di oggetti con `id` e `name`. ID vuoti, duplicati,
 oltre 255 caratteri o record incompleti invalidano l’intero elenco prima
-del salvataggio. Nessuna paginazione è documentata per questo metodo;
-non vengono aggiunti parametri presunti.
+del salvataggio. Nessuna paginazione è documentata per questo metodo.
+La scoperta segue anche i partner annidati, deduplicando gli ID già letti.
 Fonte: [getCompaniesList](https://www.bitdefender.com/business/support/en/77211-128478-getcompanieslist.html).
 
 `getCompanyDetails` usa `/v1.0/jsonrpc/companies` con `companyId` esplicito.
-Si controlla che l’oggetto restituito abbia lo stesso ID richiesto e si conserva
-solo `isSuspended`: `true` significa **Sospesa**, `false` **Attiva**. Campo
+Si controlla che l’oggetto restituito abbia lo stesso ID richiesto. Si conservano
+`type` (0 partner, 1 cliente), `canBeManagedByAbove` (gestione della sicurezza
+condivisa) e `isSuspended`: `true` significa **Sospesa**, `false` **Attiva**. Campo
 assente/nullo significa **Stato non disponibile**; stringhe/numeri non sono
 convertiti implicitamente. Presenza nell’inventario e scadenza della licenza
 non determinano lo stato dell’account. Altri dettagli, contatti e indirizzi
 remoti non vengono salvati.
+
+Un partner con sicurezza condivisa viene esplorato usando `parentId`; uno
+non condiviso resta visibile con un avviso, senza richiederne clienti o
+inventario. Tipo mancante o condivisione sconosciuta per un partner impediscono
+di dichiarare completa la scoperta. Le aziende non viste vengono segnate
+assenti soltanto dopo una sincronizzazione aziendale interamente riuscita.
+I due campi di ambito sono salvati da una migrazione additiva locale.
 
 La sincronizzazione legge lo stato dopo la licenza, con pausa di 250 ms.
 Se questa lettura fallisce, conserva la licenza appena acquisita e lo stato
@@ -35,9 +44,9 @@ precedente, segnala l’aggiornamento incompleto e mostra quest’ultimo come
 **ultimo stato rilevato**. Come per gli altri errori di sincronizzazione, il
 pannello segnala il fallimento prima di avviare l’import dei computer.
 La chiave deve consentire la lettura nel servizio Companies. Nessuna lettura
-avviene all’apertura del selettore. La nuova chiamata non è ancora stata
-eseguita contro GravityZone reale; i casi simulati sono proiezioni anonime
-dei campi documentati, non payload cliente.
+avviene all’apertura del selettore. La chiamata è stata eseguita nel collaudo autorizzato del 04/11/2026 su
+16 aziende, senza errori. I casi simulati sono proiezioni anonime dei campi
+documentati, non payload cliente.
 Fonte: [getCompanyDetails](https://www.bitdefender.com/business/support/en/77211-126239-getcompanydetails.html).
 
 ## Licenza tecnica aziendale
@@ -49,11 +58,18 @@ un oggetto, benché la prosa del contratto lo definisca Array.
 
 Vengono conservati il tipo di abbonamento `subscriptionType`
 (1 prova, 2 licenza, 3 mensile, 4 licenza mensile di prova, 5 abbonamento
-mensile di prova, 6 FRAT) e la parte calendario di `expiryDate`.
-La data può mancare o essere nulla: viene mostrata come **Non disponibile**.
-Il formato documentato è `YYYY-MM-DDTHH:mm:ss`, privo di fuso dichiarato;
-non viene convertito in UTC o Europe/Rome. Una data non valida provoca un
-errore e conserva il precedente dato noto, segnalato come non aggiornato.
+mensile di prova, 6 FRAT). La scadenza aziendale locale `technical_expires_on`
+usa **`endSubscription` per il tipo 3 (Mensile)**, nel formato `YYYY-MM-DD`
+verificato dal vivo. Questa è la fine dell’abbonamento impostata nella console;
+`expiryDate` può avere un valore differente e non viene usata come ripiego.
+Se `endSubscription` manca o è nulla, la scadenza resta **Non disponibile**.
+Non si deducono date dal rinnovo automatico e non si estendono periodi.
+
+Per gli altri tipi rimane la parte calendario di `expiryDate`, nel formato
+`YYYY-MM-DDTHH:mm:ss`. Date mancanti/nulle sono sconosciute. Entrambi i formati
+sono validati rigorosamente, inclusi giorni reali e anni bisestili, senza
+conversione di fuso. Una data non valida provoca un errore e conserva il
+precedente dato noto, segnalato come non aggiornato.
 Chiavi licenza e altri dettagli non necessari vengono scartati.
 Nessun campo descrive le date commerciali locali dei singoli computer.
 La chiave deve avere accesso anche al servizio Licensing.
@@ -72,7 +88,8 @@ Un modello sconosciuto non nasconde il tipo prodotto noto. Tipi JSON errati
 provocano un errore sanitizzato e conservano i dati precedenti.
 La lettura usa la chiamata già esistente, senza richieste aggiuntive. I casi
 dei test derivano dai valori/condizioni del contratto ufficiale; non sono payload
-cliente e questa aggiunta non è ancora stata verificata con l’API reale.
+cliente; la lettura è stata eseguita anche nell’aggiornamento reale autorizzato
+del 04/11/2026.
 
 ## Inventario endpoint
 
@@ -88,6 +105,12 @@ successive. Una pagina incoerente, un ID duplicato entro lo stesso contenitore
 o un errore successivo impediscono l’import parziale dell’azienda. Oltre
 1000 pagine per contenitore si segnala un errore, senza troncare l’import.
 Si verifica `companyId` prima di attribuire i dati all’azienda locale.
+L’inventario ricorsivo di un partner può includere i PC dei suoi clienti:
+vengono esclusi da quella lettura soltanto i record appartenenti ad altre
+aziende già scoperte, che vengono lette separatamente sotto il proprio ID.
+Un proprietario sconosciuto resta un errore; la verifica non viene rimossa.
+I partner non condivisi conservano l’eventuale inventario locale precedente,
+senza dichiarare una nuova lettura riuscita o spostare dati commerciali.
 
 Si conservano soltanto `id`, `name` e i dettagli disponibili
 `operatingSystemVersion`, `isManaged`, `isIsolated`. I campi mancanti sono
@@ -126,14 +149,26 @@ v1.1 generale.
 mantenuto gli ID e il collegamento a una postazione manuale creata dal browser,
 conservandone nome e note; il record di prova era stato poi rimosso dal solo DB
 di sviluppo. Questi risultati riguardano il vecchio schema e non certificano
-il nuovo flusso `Computer`. Il contratto e i metodi remoti restano invariati;
-nessun nuovo test live del refactor #26 è documentato qui.
+il nuovo flusso `Computer`. Il contratto e i metodi remoti restano invariati.
+Il collaudo aggiornato sul modello Computer è riportato nella sezione seguente.
+
+**Collaudo aggiornato del 04/11/2026:** dopo la sostituzione della chiave dal
+pannello e l’autorizzazione del committente, scoperti 4 partner e 18 clienti
+accessibili. Due partner dichiarano la sicurezza non condivisa: sono visibili,
+ma il loro inventario e i loro clienti non vengono richiesti. Sincronizzazione
+aziende e inventario completata con 115 PC, nessun errore. I 102 PC precedenti
+mantengono ID, proprietà e tutti i dati commerciali/storico; 13 nuovi PC
+iniziano con campi commerciali vuoti. Confrontati anche contatti/note aziendali
+e credenziale cifrata, invariati. Database MySQL locale verificato, nessuna
+modifica a GravityZone; dettagli e limiti in [dashboard-check.md](dashboard-check.md).
 
 ## Ripetibilità, errori e limiti
 
 L’elenco viene acquisito e validato prima di una transazione locale.
 L’upsert usa l’ID esterno univoco e modifica esclusivamente campi tecnici.
-Aziende non restituite vengono segnate assenti, senza cancellarle.
+Aziende non restituite vengono segnate assenti, senza cancellarle, soltanto
+al completamento della scoperta e delle letture aziendali. Un errore intermedio
+conserva la presenza precedente dei clienti non ancora verificati.
 Contatti e note locali non rientrano negli aggiornamenti di sincronizzazione.
 Le licenze sono acquisite separatamente: errori puntuali non bloccano le
 altre aziende; errori di rete, HTTP e 429 interrompono le letture successive.
@@ -170,7 +205,14 @@ Le fixture `companies-list.json`, `license-yearly.json` e `license-monthly.json`
 in `tests/Fixtures/GravityZone` riproducono gli esempi ufficiali completi,
 sostituendo nomi/ID aziendali e chiavi licenza con dati fittizi. Tutte usano
 l’ID RPC fisso `103d7b05-ec02-481b-9ed6-c07b97de2b7a` delle richieste.
-I test non usano credenziali reali e bloccano richieste HTTP non simulate.
+La fixture `license-monthly-end.json` è una proiezione minima dei campi e
+tipi effettivamente verificati tramite letture API autorizzate il 04/11/2026:
+`subscriptionType: 3`, `expiryDate` con ora, `endSubscription` come data e
+`autoRenewPeriod: 0`. Le date sono sostituite con valori fittizi; nessun nome,
+ID azienda, chiave o payload cliente è conservato nella fixture. Mancanza di
+`endSubscription` e `autoRenewPeriod` osservata dal vivo; null e valori invalidi
+sono casi limite simulati. La fixture documentale mensile precedente resta
+invariata. I test non usano credenziali reali e bloccano richieste HTTP non simulate.
 
 **Collaudo storico, precedente a #26:** dopo inserimento della chiave nel
 pannello e autorizzazione del cliente, `getCompaniesList` e `getLicenseInfo`
