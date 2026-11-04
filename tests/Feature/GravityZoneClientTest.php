@@ -81,7 +81,7 @@ class GravityZoneClientTest extends TestCase
 
         $client = app(GravityZoneClient::class);
         foreach ([false, true, null, null] as $status) {
-            $this->assertSame(['is_suspended' => $status], $client->getCompanyDetails($this->settings(), 'company-1'));
+            $this->assertSame(['is_suspended' => $status, 'gravityzone_type' => null, 'can_manage_security' => null], $client->getCompanyDetails($this->settings(), 'company-1'));
         }
         Http::assertSent(fn (Request $request): bool => $request->method() === 'POST' &&
             $request->url() === self::API_URL.'/v1.0/jsonrpc/companies' &&
@@ -89,6 +89,34 @@ class GravityZoneClientTest extends TestCase
             $request->data() === ['jsonrpc' => '2.0', 'id' => self::RPC_ID, 'method' => 'getCompanyDetails', 'params' => ['companyId' => 'company-1']]
         );
         Http::assertSentCount(4);
+    }
+
+    public function test_company_scope_fields_and_child_listing_use_verified_read_parameters(): void
+    {
+        // Types, sharing flags and parentId verified live on 2026-11-04; IDs/names are fictitious.
+        Http::fakeSequence()
+            ->push(['id' => self::RPC_ID, 'jsonrpc' => '2.0', 'result' => [
+                'id' => 'partner-1', 'type' => 0, 'canBeManagedByAbove' => false, 'isSuspended' => false,
+            ]])
+            ->push(['id' => self::RPC_ID, 'jsonrpc' => '2.0', 'result' => [['id' => 'client-1', 'name' => 'Cliente esempio']]]);
+        $client = app(GravityZoneClient::class);
+        $this->assertSame(['is_suspended' => false, 'gravityzone_type' => 0, 'can_manage_security' => false],
+            $client->getCompanyDetails($this->settings(), 'partner-1'));
+        $this->assertSame([['id' => 'client-1', 'name' => 'Cliente esempio']], $client->getCompaniesList($this->settings(), 'partner-1'));
+        Http::assertSent(fn (Request $request): bool => $request['method'] === 'getCompaniesList' && $request['params'] === ['parentId' => 'partner-1']);
+    }
+
+    public function test_invalid_parent_ids_never_send_a_request(): void
+    {
+        foreach (['', ' ', str_repeat('a', 256)] as $id) {
+            try {
+                app(GravityZoneClient::class)->getCompaniesList($this->settings(), $id);
+                $this->fail('Un ID parent non valido deve essere rifiutato.');
+            } catch (GravityZoneException $exception) {
+                $this->assertSame('ID azienda GravityZone non valido.', $exception->getMessage());
+            }
+        }
+        Http::assertNothingSent();
     }
 
     #[DataProvider('invalidCompanyDetails')]
@@ -109,6 +137,9 @@ class GravityZoneClientTest extends TestCase
             'string status' => [['id' => 'company-1', 'isSuspended' => 'false']],
             'numeric status' => [['id' => 'company-1', 'isSuspended' => 0]],
             'non-object' => [[]],
+            'string company type' => [['id' => 'company-1', 'type' => '0']],
+            'unknown company type' => [['id' => 'company-1', 'type' => 2]],
+            'string sharing' => [['id' => 'company-1', 'canBeManagedByAbove' => 'false']],
         ];
     }
 

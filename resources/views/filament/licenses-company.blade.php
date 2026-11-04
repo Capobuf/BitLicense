@@ -35,7 +35,7 @@
                     </div>
                 @endforeach
                 <div class="bl-company-expiry">
-                    <dt>Scadenza tecnica</dt>
+                    <dt>{{ $company->technical_license_type === 'Mensile' ? 'Fine abbonamento' : 'Scadenza tecnica' }}</dt>
                     <dd>
                         {{ $company->technical_expires_on?->format('d/m/Y') ?? 'Non disponibile' }}
                         @if ($company->technical_expires_on?->lt(today('Europe/Rome')))
@@ -48,6 +48,9 @@
             </dl>
             @if (! $company->is_present)
                 <p role="status">Azienda non più rilevata in GravityZone. Dati locali conservati.</p>
+            @endif
+            @if ($company->gravityzone_type === 0 && $company->can_manage_security === false)
+                <p role="status">Questo partner non condivide la gestione della sicurezza con l’account API. Il suo inventario non viene letto.</p>
             @endif
             @foreach (array_filter([$company->sync_error, $company->endpoints_sync_error]) as $error)
                 <p role="status">{{ $error }} I dati mostrati sono gli ultimi disponibili.</p>

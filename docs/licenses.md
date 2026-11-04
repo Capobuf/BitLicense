@@ -15,6 +15,13 @@ tabella. Scegliendo una singola azienda si torna alla vista precedente.
 Le stesse modali e gli stessi vincoli commerciali sono riutilizzati nelle
 due viste, senza chiamare GravityZone durante il caricamento.
 
+Accanto ad **Azienda**, il selettore **Licenza** elenca i prodotti aziendali
+GravityZone presenti nel database. Selezionandone uno si apre **Tutte le
+Aziende**, limitata alle aziende con quel prodotto; anche ricerca e opzioni
+del selettore Azienda seguono il filtro. Si può poi scegliere una sola azienda.
+Svuotare Licenza ripristina tutte le aziende, comprese quelle senza prodotto
+noto. Il filtro usa la licenza aziendale, senza cambiare i dati dei PC.
+
 Ogni opzione azienda ha un’icona e mostra **Nome — Stato — Scadenza tecnica**.
 Attiva/Sospesa proviene esclusivamente da `isSuspended` di GravityZone; finché
 non acquisito compare **Stato non disponibile**. Un aggiornamento fallito o
@@ -31,9 +38,9 @@ endpoint, postazioni, coperture e assegnazioni, né un catalogo prodotti/prezzi.
 Ogni computer ha data di attivazione, scadenza, prezzo,
 riferimenti fattura/preventivo e note, tutti
 facoltativi. Un PC manuale richiede il nome e usa l’azienda selezionata.
-Il nome tecnico GravityZone è in sola lettura. **Prodotto aziendale** viene
-letto dalla licenza aziendale GravityZone e mostrato in sola lettura nella
-tabella e nella modale; per un PC manuale usa l’azienda
+Il nome tecnico GravityZone è in sola lettura. La colonna **Licenza**, sempre
+visibile per ogni PC accanto a Computer, mostra in sola lettura il **prodotto
+aziendale GravityZone**, già presente nella modale; per un PC manuale usa l’azienda
 selezionata, per uno importato l’azienda rilevata, anche se diversa da quella locale. Se il campo
 non è restituito, compare **Non fornito dall’API**. Non si deducono il prodotto
 commerciale del singolo PC o le sue date dai moduli tecnici.
@@ -90,7 +97,7 @@ ricerca, filtri o pagina corrente, e si aggiorna dopo il salvataggio.
 
 La ricerca parte da sinistra; filtri e gestore colonne hanno soltanto icone
 con etichette accessibili. Il gestore consente il riordino tramite trascinamento
-e la selezione delle informazioni aggiuntive: prodotto aziendale, note,
+e la selezione delle informazioni aggiuntive: note,
 sistema operativo, azienda rilevata e ultimo rilevamento. Prezzo e riferimenti
 seguono le regole automatiche sopra. Le preferenze restano nella sessione;
 **Reimposta** ripristina la selezione iniziale.

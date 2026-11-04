@@ -37,15 +37,15 @@ class DashboardNavigationTest extends TestCase
         }
         $this->computer($company);
         $this->computer($company, ['activated_on' => '2026-12-01', 'expires_on' => '2027-01-01']);
-        $page = Livewire::test(Dashboard::class)->set('period', '90');
-        foreach (['all', 'expiring', 'expired'] as $state) {
-            $page->assertSee(Dashboard::getUrl(['period' => '90', 'companyState' => $state]).'#companies');
+        $page = Livewire::test(Dashboard::class)->set('period', '3m')->set('companyState', '60');
+        foreach (['all', '60', 'expired'] as $state) {
+            $page->assertSee(Dashboard::getUrl(['period' => '3m', 'companyState' => $state]).'#companies');
         }
         $page->assertSee(Licenze::getUrl(['company' => 'all']));
         foreach (['active', 'expiring', 'expired', 'missing', 'future'] as $status) {
             $page->assertSee(Licenze::getUrl(['company' => 'all', 'status' => $status]));
         }
-        foreach ([['2026-11-03', '2026-11-30'], ['2026-12-01', '2026-12-31'], ['2027-01-01', '2027-01-31'], ['2027-02-01', '2027-02-01']] as [$from, $until]) {
+        foreach ([['2026-11-03', '2026-11-30'], ['2026-12-01', '2026-12-31'], ['2027-01-01', '2027-01-31'], ['2027-02-01', '2027-02-03']] as [$from, $until]) {
             $page->assertSee(Licenze::getUrl(['company' => 'all', 'expires_from' => $from, 'expires_until' => $until]));
         }
     }

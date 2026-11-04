@@ -24,14 +24,18 @@ class GravityZoneClient
     private const RETRY_AT_CACHE_KEY = 'gravityzone-retry-at';
 
     /** @return list<array{id: string, name: string}> */
-    public function getCompaniesList(GravityZoneSetting $settings): array
+    public function getCompaniesList(GravityZoneSetting $settings, ?string $parentId = null): array
     {
+        if ($parentId !== null && (trim($parentId) === '' || mb_strlen($parentId) > 255)) {
+            throw new GravityZoneException('ID azienda GravityZone non valido.');
+        }
+
         try {
             $response = $this->connection($settings)->post('/v1.0/jsonrpc/network', [
                 'jsonrpc' => '2.0',
                 'id' => self::REQUEST_ID,
                 'method' => 'getCompaniesList',
-                'params' => [],
+                'params' => $parentId === null ? [] : ['parentId' => $parentId],
             ]);
         } catch (ConnectionException) {
             throw new GravityZoneException('Impossibile contattare GravityZone: errore di rete o tempo di attesa scaduto. Riprova più tardi.', stopSynchronization: true);
@@ -61,7 +65,7 @@ class GravityZoneClient
         return $companies;
     }
 
-    /** @return array{is_suspended: ?bool} */
+    /** @return array{is_suspended: ?bool, gravityzone_type: ?int, can_manage_security: ?bool} */
     public function getCompanyDetails(GravityZoneSetting $settings, string $companyId): array
     {
         if (trim($companyId) === '' || mb_strlen($companyId) > 255) {
@@ -82,11 +86,17 @@ class GravityZoneClient
         $company = $this->responsePayload($response)->result ?? null;
 
         if (! $company instanceof stdClass || ($company->id ?? null) !== $companyId ||
-            (isset($company->isSuspended) && ! is_bool($company->isSuspended))) {
+            (isset($company->isSuspended) && ! is_bool($company->isSuspended)) ||
+            (isset($company->type) && ! in_array($company->type, [0, 1], true)) ||
+            (isset($company->canBeManagedByAbove) && ! is_bool($company->canBeManagedByAbove))) {
             throw new GravityZoneException('La risposta GravityZone non contiene uno stato aziendale valido.');
         }
 
-        return ['is_suspended' => $company->isSuspended ?? null];
+        return [
+            'is_suspended' => $company->isSuspended ?? null,
+            'gravityzone_type' => $company->type ?? null,
+            'can_manage_security' => $company->canBeManagedByAbove ?? null,
+        ];
     }
 
     /** @return array{technical_license_type: string, technical_expires_on: ?string, technical_product: ?string} */
@@ -142,13 +152,17 @@ class GravityZoneClient
             }
         }
 
-        $expiry = $license->expiryDate ?? null;
+        // Monthly expiryDate is distinct from the company's subscription end.
+        $monthly = $license->subscriptionType === 3;
+        $expiry = $monthly ? ($license->endSubscription ?? null) : ($license->expiryDate ?? null);
 
         if ($expiry !== null) {
-            $date = is_string($expiry) && preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/D', $expiry)
-                ? DateTimeImmutable::createFromFormat('!Y-m-d\TH:i:s', $expiry, new DateTimeZone('UTC')) : false;
+            $format = $monthly ? 'Y-m-d' : 'Y-m-d\TH:i:s';
+            $pattern = $monthly ? '/^\d{4}-\d{2}-\d{2}$/D' : '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/D';
+            $date = is_string($expiry) && preg_match($pattern, $expiry)
+                ? DateTimeImmutable::createFromFormat('!'.$format, $expiry, new DateTimeZone('UTC')) : false;
 
-            if (! $date || DateTimeImmutable::getLastErrors() !== false || $date->format('Y-m-d\TH:i:s') !== $expiry) {
+            if (! $date || DateTimeImmutable::getLastErrors() !== false || $date->format($format) !== $expiry) {
                 throw new GravityZoneException('La risposta GravityZone contiene una scadenza tecnica non valida.');
             }
 
@@ -172,7 +186,7 @@ class GravityZoneClient
     }
 
     /** @return list<array{id: string, name: string, platform: ?string, is_managed: ?bool, is_isolated: ?bool}> */
-    public function getNetworkInventoryItems(GravityZoneSetting $settings, string $companyId): array
+    public function getNetworkInventoryItems(GravityZoneSetting $settings, string $companyId, array $otherCompanyIds = []): array
     {
         if (trim($companyId) === '' || mb_strlen($companyId) > 255) {
             throw new GravityZoneException('ID azienda GravityZone non valido.');
@@ -181,7 +195,7 @@ class GravityZoneClient
         $parents = [$companyId];
 
         // AD computers require an explicit read below the discovered AD folder.
-        foreach ($this->inventoryItems($settings, $companyId, $companyId, ['details' => ['name' => 'Active Directory']]) as $item) {
+        foreach ($this->inventoryItems($settings, $companyId, $companyId, ['details' => ['name' => 'Active Directory']], $otherCompanyIds) as $item) {
             if ($item->type === 4 && $item->name === 'Active Directory' && $item->id !== $companyId) {
                 $parents[] = $item->id;
             }
@@ -193,7 +207,7 @@ class GravityZoneClient
             foreach ($this->inventoryItems($settings, $parentId, $companyId, [
                 'type' => ['computers' => true, 'virtualMachines' => true, 'ec2Instances' => true],
                 'depth' => ['allItemsRecursively' => true],
-            ]) as $item) {
+            ], $otherCompanyIds) as $item) {
                 if (! in_array($item->type, [5, 6, 7], true)) {
                     continue;
                 }
@@ -229,7 +243,7 @@ class GravityZoneClient
     }
 
     /** @return iterable<stdClass> */
-    private function inventoryItems(GravityZoneSetting $settings, string $parentId, string $companyId, array $filters): iterable
+    private function inventoryItems(GravityZoneSetting $settings, string $parentId, string $companyId, array $filters, array $otherCompanyIds): iterable
     {
         $seen = [];
 
@@ -260,11 +274,22 @@ class GravityZoneClient
                 if (! $item instanceof stdClass ||
                     ! is_string($item->id ?? null) || trim($item->id) === '' || mb_strlen($item->id) > 255 ||
                     isset($seen[$item->id]) || ! is_string($item->name ?? null) || trim($item->name) === '' ||
-                    ($item->companyId ?? null) !== $companyId || ! is_int($item->type ?? null)) {
+                    ! is_string($item->companyId ?? null) || trim($item->companyId) === '' ||
+                    ! is_int($item->type ?? null)) {
                     throw new GravityZoneException('La risposta GravityZone contiene elementi inventario incompleti, duplicati o di un’altra azienda.');
                 }
 
                 $seen[$item->id] = true;
+
+                if ($item->companyId !== $companyId) {
+                    // A partner's recursive inventory also contains separately imported clients.
+                    if (in_array($item->companyId, $otherCompanyIds, true)) {
+                        continue;
+                    }
+
+                    throw new GravityZoneException('La risposta GravityZone contiene elementi inventario incompleti, duplicati o di un’altra azienda.');
+                }
+
                 yield $item;
             }
 

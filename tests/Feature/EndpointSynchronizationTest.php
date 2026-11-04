@@ -195,6 +195,20 @@ class EndpointSynchronizationTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_unshared_partner_is_not_queried_and_does_not_lose_previous_inventory(): void
+    {
+        $partner = $this->company('partner-1');
+        $partner->forceFill(['gravityzone_type' => 0, 'can_manage_security' => false, 'endpoints_sync_error' => 'Errore precedente'])->save();
+        $pc = Computer::create(['company_id' => $partner->id, 'gravityzone_company_id' => $partner->id, 'gravityzone_id' => 'old-endpoint', 'name' => 'PC locale']);
+        $before = $pc->refresh()->getAttributes();
+        $this->mock(GravityZoneClient::class, fn (MockInterface $mock) => $mock->shouldNotReceive('getNetworkInventoryItems'));
+
+        $this->assertSame(0, app(EndpointSynchronizer::class)->sync());
+        $this->assertSame($before, $pc->refresh()->getAttributes());
+        $this->assertNull($partner->refresh()->endpoints_sync_error);
+        $this->assertNull($partner->endpoints_synced_at);
+    }
+
     private function company(string $externalId): Company
     {
         $company = new Company;

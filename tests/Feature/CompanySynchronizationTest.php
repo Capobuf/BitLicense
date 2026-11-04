@@ -115,6 +115,45 @@ class CompanySynchronizationTest extends TestCase
         $this->assertSame($before, $pc->refresh()->getAttributes());
     }
 
+    public function test_monthly_end_refresh_clears_missing_dates_and_preserves_computers_and_history_on_failure(): void
+    {
+        $companies = [['id' => 'company-1', 'name' => 'Azienda esempio']];
+        $license = json_decode(file_get_contents(base_path('tests/Fixtures/GravityZone/license-monthly-end.json')), true)['result'];
+        $this->fakeCompanies($companies, $license);
+        $sync = app(CompanySynchronizer::class);
+        $sync->sync();
+        $company = Company::sole();
+        $this->assertSame('2027-06-30', $company->technical_expires_on->toDateString());
+        $readAt = $company->license_synced_at;
+        $pc = Computer::create(['company_id' => $company->id, 'name' => 'PC locale']);
+        $pc->updateCommercial(['activated_on' => '2026-04-20', 'expires_on' => '2027-04-20', 'amount' => '79,90'], 0);
+        $pc->updateCommercial(['notes' => 'Nota conservata', 'quote_reference' => 'PREV-TEST'], 1);
+        $before = $pc->getAttributes();
+
+        $this->travel(1)->hours();
+        $license['endSubscription'] = '2027-02-29';
+        $this->fakeCompanies($companies, $license);
+        $this->artisan('bitlicense:sync-companies')->assertFailed();
+        $company->refresh();
+        $this->assertSame('2027-06-30', $company->technical_expires_on->toDateString());
+        $this->assertTrue($company->license_synced_at->equalTo($readAt));
+        $this->assertStringContainsString('scadenza tecnica non valida', $company->sync_error);
+        $this->assertSame($before, $pc->refresh()->getAttributes());
+
+        $license['endSubscription'] = '2027-07-31';
+        $this->fakeCompanies($companies, $license);
+        $this->assertSame(1, $sync->sync());
+        $this->assertSame('2027-07-31', $company->refresh()->technical_expires_on->toDateString());
+        unset($license['endSubscription']);
+        $this->fakeCompanies($companies, $license);
+        $this->assertSame(1, $sync->sync());
+        $this->assertSame(1, $sync->sync());
+        $this->assertNull($company->refresh()->technical_expires_on);
+        $this->assertNull($company->sync_error);
+        $this->assertDatabaseCount('companies', 1);
+        $this->assertSame($before, $pc->refresh()->getAttributes());
+    }
+
     public function test_network_failure_preserves_the_complete_last_import_and_records_a_safe_error(): void
     {
         $this->fakeCompanies([['id' => 'company-1', 'name' => 'Azienda esempio']]);
@@ -189,7 +228,7 @@ class CompanySynchronizationTest extends TestCase
             : ($request['params']['companyId'] === 'company-1'
                 ? Http::response(['jsonrpc' => '2.0', 'id' => $request['id'], 'error' => ['code' => -32002, 'message' => 'fake-test-key']])
                 : Http::response($this->rpc($request['method'] === 'getCompanyDetails'
-                    ? ['id' => 'company-2', 'isSuspended' => false] : ['subscriptionType' => 3]))));
+                    ? ['id' => 'company-2', 'isSuspended' => false, 'type' => 1, 'canBeManagedByAbove' => true] : ['subscriptionType' => 3]))));
 
         $this->artisan('bitlicense:sync-companies')->assertFailed();
         $first->refresh();
@@ -280,13 +319,61 @@ class CompanySynchronizationTest extends TestCase
         Http::assertSentCount(1);
     }
 
+    public function test_partner_clients_are_discovered_once_and_reappear_with_their_local_data(): void
+    {
+        $client = new Company;
+        $client->forceFill(['gravityzone_id' => 'client-old', 'name' => 'Nome precedente', 'last_seen_at' => now(), 'is_present' => false])->save();
+        $client->update(['notes' => 'Nota locale']);
+        $pc = Computer::create(['company_id' => $client->id, 'name' => 'PC locale']);
+        $pc->updateCommercial(['expires_on' => '2027-05-01', 'amount' => '75,00'], 0);
+        $before = $pc->getAttributes();
+        foreach ([true, false, true] as $includeOld) {
+            Http::swap(new Factory);
+            Http::preventStrayRequests();
+            Http::fake(fn ($request) => Http::response($this->rpc(match ($request['method']) {
+                'getCompaniesList' => array_map(fn ($id) => ['id' => $id, 'name' => 'Nome '.$id], match ($request['params']['parentId'] ?? null) {
+                    null => ['partner-a', 'partner-unshared'],
+                    'partner-a' => $includeOld ? ['partner-b', 'client-old', 'partner-a'] : ['partner-b', 'partner-a'],
+                    'partner-b' => $includeOld ? ['client-new', 'client-old'] : ['client-new'],
+                }),
+                'getLicenseInfo' => ['subscriptionType' => 3, 'endSubscription' => '2027-06-30'],
+                'getCompanyDetails' => ['id' => $request['params']['companyId'], 'isSuspended' => false,
+                    'type' => str_starts_with($request['params']['companyId'], 'partner-') ? 0 : 1,
+                    'canBeManagedByAbove' => $request['params']['companyId'] !== 'partner-unshared'],
+            })));
+            $this->assertSame($includeOld ? 5 : 4, app(CompanySynchronizer::class)->sync());
+            $this->assertDatabaseCount('companies', 5);
+            $this->assertSame($includeOld, $client->refresh()->is_present);
+            $this->assertSame('Nota locale', $client->notes);
+            $this->assertSame($before, $pc->refresh()->getAttributes());
+            Http::assertNotSent(fn ($request): bool => $request['method'] === 'getCompaniesList' &&
+                in_array($request['params']['parentId'] ?? null, ['partner-unshared', 'client-old', 'client-new'], true));
+        }
+    }
+
+    public function test_failed_partner_discovery_preserves_previous_client_presence_and_reports_failure(): void
+    {
+        $existing = new Company;
+        $existing->forceFill(['gravityzone_id' => 'previous-client', 'name' => 'Cliente precedente', 'last_seen_at' => now()])->save();
+        Http::fake(fn ($request) => Http::response($request['method'] === 'getCompaniesList' && isset($request['params']['parentId'])
+            ? ['id' => $request['id'], 'jsonrpc' => '2.0', 'error' => ['code' => -32602, 'message' => 'private-data']]
+            : $this->rpc(match ($request['method']) {
+                'getCompaniesList' => [['id' => 'partner-1', 'name' => 'Partner esempio']],
+                'getLicenseInfo' => ['subscriptionType' => 3],
+                'getCompanyDetails' => ['id' => 'partner-1', 'type' => 0, 'canBeManagedByAbove' => true],
+            })));
+        $this->artisan('bitlicense:sync-companies')->assertFailed();
+        $this->assertTrue($existing->refresh()->is_present);
+        $this->assertNotNull(Company::where('gravityzone_id', 'partner-1')->sole()->sync_error);
+    }
+
     private function fakeCompanies(array $companies, array $license = ['subscriptionType' => 2, 'expiryDate' => '2027-06-30T23:30:00'], ?bool $suspended = false): void
     {
         Http::swap(new Factory);
         Http::preventStrayRequests();
         Http::fake(fn ($request) => Http::response($this->rpc(match ($request['method']) {
             'getCompaniesList' => $companies,
-            'getCompanyDetails' => ['id' => $request['params']['companyId'], 'isSuspended' => $suspended],
+            'getCompanyDetails' => ['id' => $request['params']['companyId'], 'isSuspended' => $suspended, 'type' => 1, 'canBeManagedByAbove' => true],
             'getLicenseInfo' => $license,
         })));
     }
