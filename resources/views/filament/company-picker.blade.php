@@ -8,14 +8,16 @@
     aria-label="Selezione azienda"
     x-data="{ open: false, search: '', normalize: (value) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase() }"
     x-bind:class="{ 'bl-picker-open': open }"
+    x-on:click.outside="open = false"
+    x-on:keydown.escape="open = false"
 >
-    <button type="button" class="bl-picker-toggle" x-on:click="open = ! open" x-bind:aria-expanded="open">
+    <button type="button" class="bl-picker-toggle" x-on:click="open = ! open" x-bind:aria-expanded="open" aria-controls="bl-picker-panel">
         <x-filament::icon icon="heroicon-o-building-office-2" class="bl-company-icon" />
         <span>{{ $current }}@if (filled($license)) <span class="bl-picker-muted">· {{ Str::afterLast($license, ' · ') }}</span>@endif</span>
         <x-filament::icon icon="heroicon-m-chevron-down" class="bl-picker-toggle-chevron" />
     </button>
 
-    <div class="bl-picker-panel">
+    <div class="bl-picker-panel" id="bl-picker-panel">
         @if ($licenses->isNotEmpty())
             <div class="bl-picker-licenses" role="group" aria-label="Licenza aziendale GravityZone">
                 @foreach ([null => 'Tutte'] + $licenses->mapWithKeys(fn (string $product): array => [$product => Str::afterLast($product, ' · ')])->all() as $value => $label)
