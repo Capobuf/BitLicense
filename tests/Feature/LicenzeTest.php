@@ -78,36 +78,26 @@ class LicenzeTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_company_options_show_escaped_names_remote_status_and_technical_expiry_without_api_calls(): void
+    public function test_company_picker_shows_escaped_names_and_technical_status_without_api_calls(): void
     {
         $company = $this->company();
         $company->forceFill(['name' => 'D’Amìco & Figli <img src=x onerror=alert(1)>', 'is_suspended' => false])->save();
         $suspended = $this->company();
         $suspended->forceFill(['is_suspended' => true, 'technical_expires_on' => null])->save();
         $unknown = $this->company();
-        $this->computer($company, ['expires_on' => '2030-01-01']);
+        $this->computer($company, ['expires_on' => '2026-11-01']);
 
-        Livewire::test(Licenze::class)->assertFormFieldExists('company_id', function (Select $field) use ($company, $suspended, $unknown): bool {
-            $options = $field->getOptions();
-            $this->assertTrue($field->isHtmlAllowed());
-            $this->assertStringContainsString('Tutte le Aziende', $options['all']);
-            $this->assertStringContainsString('<svg', $options['all']);
-            $this->assertStringContainsString('<svg', $options[$company->id]);
-            $this->assertStringContainsString(e($company->name), $options[$company->id]);
-            $this->assertStringNotContainsString($company->name, $options[$company->id]);
-            $this->assertStringContainsString('Attiva', $options[$company->id]);
-            $this->assertStringContainsString('31/12/2026', $options[$company->id]);
-            $this->assertStringNotContainsString('01/01/2030', $options[$company->id]);
-            $this->assertStringContainsString('Sospesa', $options[$suspended->id]);
-            $this->assertStringContainsString('Scadenza tecnica: Non disponibile', $options[$suspended->id]);
-            $this->assertStringContainsString('Stato non disponibile', $options[$unknown->id]);
-            $this->assertSame([$company->id], array_keys($field->getSearchResults('d’amico & figli')));
-            $this->assertSame(['all'], array_keys($field->getSearchResults('tutte le aziende')));
+        Livewire::test(Licenze::class)->assertSee(['Tutte le aziende', $company->name])
+            ->assertSeeHtml('data-name="'.e($company->name).'"')->assertDontSeeHtml('<img src=x')
+            ->assertSeeHtmlInOrder([$suspended->name, 'licenza aziendale Sospesa', $unknown->name, 'licenza aziendale Stato non disponibile', e($company->name), 'licenza aziendale Attiva']);
 
-            return true;
-        });
-        $company->forceFill(['sync_error' => 'Aggiornamento non riuscito'])->save();
-        $this->assertStringContainsString('ultimo stato rilevato', view('filament.company-option', ['company' => $company])->render());
+        $state = fn (array $attributes): array => (new Company)->forceFill($attributes + ['is_present' => true, 'is_suspended' => false])->technicalStatus();
+        $this->assertSame(['Scaduta', 'danger'], $state(['technical_expires_on' => '2026-11-02']));
+        $this->assertSame(['In scadenza', 'warning'], $state(['technical_expires_on' => '2026-11-03']));
+        $this->assertSame(['In scadenza', 'warning'], $state(['technical_expires_on' => '2026-12-03']));
+        $this->assertSame(['Attiva', 'success'], $state(['technical_expires_on' => '2026-12-04']));
+        $this->assertSame(['Scadenza non disponibile', 'gray'], $state(['technical_expires_on' => null]));
+        $this->assertSame(['Non più rilevata', 'gray'], $state(['is_present' => false, 'technical_expires_on' => '2026-12-04']));
         Http::assertNothingSent();
     }
 

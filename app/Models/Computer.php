@@ -94,6 +94,31 @@ class Computer extends Model
             });
     }
 
+    public function scopeInCommercialStatus(Builder $query, ?string $status): Builder
+    {
+        $activated = DB::raw(self::commercialDateSql('activated_on'));
+        $expires = DB::raw(self::commercialDateSql('expires_on'));
+        $day = today('Europe/Rome')->toDateString();
+        $horizon = today('Europe/Rome')->addDays(30)->toDateString();
+
+        return match ($status) {
+            'missing' => $query->where(fn (Builder $q): Builder => $q->whereNull($activated)->orWhereNull($expires)),
+            'expired' => $query->whereNotNull($activated)->whereDate($expires, '<', $day),
+            'expiring' => $query->whereDate($activated, '<=', $day)->whereDate($expires, '>=', $day)->whereDate($expires, '<=', $horizon),
+            'active' => $query->whereDate($activated, '<=', $day)->whereDate($expires, '>', $horizon),
+            'future' => $query->whereNotNull($expires)->whereDate($activated, '>', $day),
+            default => $query,
+        };
+    }
+
+    public function scopeExpiringBetween(Builder $query, ?string $from, ?string $until): Builder
+    {
+        $expires = DB::raw(self::commercialDateSql('expires_on'));
+
+        return $query->when(filled($from), fn (Builder $query): Builder => $query->whereDate($expires, '>=', $from))
+            ->when(filled($until), fn (Builder $query): Builder => $query->whereDate($expires, '<=', $until));
+    }
+
     public function scopeWithCommercialPeriods(Builder $query): Builder
     {
         return $query->with(['periods.operation', 'originPeriods.operation', 'company.renewals', 'gravityzoneCompany']);

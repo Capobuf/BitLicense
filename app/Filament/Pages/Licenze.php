@@ -24,8 +24,9 @@ use Filament\Infolists\Components\TextEntry;
 use Filament\Notifications\Notification;
 use Filament\Pages\Dashboard;
 use Filament\Schemas\Components\Actions;
-use Filament\Schemas\Components\EmbeddedSchema;
 use Filament\Schemas\Components\EmbeddedTable;
+use Filament\Schemas\Components\Flex;
+use Filament\Schemas\Components\Group;
 use Filament\Schemas\Components\Livewire;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
@@ -33,6 +34,7 @@ use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Components\View;
 use Filament\Schemas\Schema;
 use Filament\Support\Enums\TextSize;
+use Filament\Support\Enums\Width;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Columns\ViewColumn;
@@ -47,7 +49,6 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\HtmlString;
-use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Locked;
@@ -64,11 +65,16 @@ class Licenze extends Dashboard implements HasTable
 
     protected ?string $subheading = 'Consulta validità e rinnovi dei computer. Apri l’azienda per consultare vendite e storico.';
 
+    protected Width|string|null $maxContentWidth = Width::Full;
+
     #[Session]
     public ?array $data = [];
 
     #[Locked]
     public array $navigationFilters = [];
+
+    #[Locked]
+    public ?array $expandedCompanies = null;
 
     protected bool $showCompanyName = false;
 
@@ -86,7 +92,6 @@ class Licenze extends Dashboard implements HasTable
     public function mount(): void
     {
         abort_unless(static::canAccess(), 403);
-        $this->form->fill($this->data);
         $companyId = filter_var(request()->query('company'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
         if ($companyId && Company::whereKey($companyId)->exists()) {
             $this->data['company_id'] = $companyId;
@@ -130,35 +135,70 @@ class Licenze extends Dashboard implements HasTable
     public function content(Schema $schema): Schema
     {
         return $schema->components([
-            EmbeddedSchema::make('form'),
-            EmbeddedTable::make()->hidden(fn (): bool => ($this->data['company_id'] ?? null) === 'all'),
-            View::make('filament.all-companies')
-                ->visible(fn (): bool => ($this->data['company_id'] ?? null) === 'all')
-                ->viewData(fn (): array => ['companies' => $this->companiesQuery()->orderBy('name')->get(['id'])]),
+            Flex::make([
+                View::make('filament.company-picker')->grow(false)->viewData(fn (): array => [
+                    'companies' => $this->companiesQuery()->withCount('computers')->orderBy('name')
+                        ->get(['id', 'name', 'is_present', 'is_suspended', 'technical_expires_on']),
+                    'licenses' => Company::query()->whereNotNull('technical_product')->where('technical_product', '!=', '')
+                        ->distinct()->orderBy('technical_product')->pluck('technical_product'),
+                ]),
+                Group::make([
+                    EmbeddedTable::make()->hidden(fn (): bool => ($this->data['company_id'] ?? null) === 'all'),
+                    View::make('filament.all-companies')
+                        ->visible(fn (): bool => ($this->data['company_id'] ?? null) === 'all')
+                        ->viewData(fn (): array => $this->allCompaniesOverview()),
+                ]),
+            ])->from('xl')->extraAttributes(['class' => 'bl-licenze-layout']),
         ]);
     }
 
-    public function form(Schema $schema): Schema
+    public function updatedData(mixed $value, ?string $key = null): void
     {
-        return $schema->statePath('data')->columns(['default' => 1, 'md' => 2])->components([
-            Select::make('company_id')->label('Azienda')->placeholder('Cerca e scegli un’azienda')->searchable()->live()->allowHtml()->wrapOptionLabels()
-                ->options(fn (): array => ['all' => view('filament.company-option', ['company' => null])->render()] + $this->companiesQuery()
-                    ->orderBy('name')->get(['id', 'name', 'is_suspended', 'is_present', 'sync_error', 'technical_expires_on'])
-                    ->mapWithKeys(fn (Company $company): array => [$company->id => view('filament.company-option', ['company' => $company])->render()])->all())
-                ->getSearchResultsUsing(fn (Select $component, string $search): array => array_filter($component->getOptions(),
-                    fn (string $label): bool => Str::contains(Str::ascii(html_entity_decode(strip_tags($label), ENT_QUOTES | ENT_HTML5, 'UTF-8')), Str::ascii($search), ignoreCase: true)))
-                ->afterStateUpdated(function (): void {
-                    $this->navigationFilters = [];
-                    unset($this->referenceColumns);
-                    $this->resetTable();
-                    $this->resetTableSearch();
-                    $this->removeTableFilters();
-                }),
-            Select::make('license')->label('Licenza')->placeholder('Tutte le licenze')->searchable()->live()
-                ->options(fn (): array => Company::query()->whereNotNull('technical_product')->where('technical_product', '!=', '')
-                    ->distinct()->orderBy('technical_product')->pluck('technical_product', 'technical_product')->all())
-                ->afterStateUpdated(fn (Set $set) => $set('company_id', 'all', shouldCallUpdatedHooks: true)),
-        ]);
+        if ($key === 'company_id') {
+            $this->data['company_id'] = $value === 'all' ? 'all' : $this->selectedCompanyId();
+        } elseif ($key === 'license') {
+            // A license choice keeps the open company when it matches; otherwise it lists the matching companies.
+            if ($this->companiesQuery()->whereKey($this->selectedCompanyId())->exists()) {
+                return;
+            }
+            $this->data['company_id'] = 'all';
+        } else {
+            return;
+        }
+        $this->navigationFilters = [];
+        $this->expandedCompanies = null;
+        unset($this->referenceColumns);
+        $this->resetTable();
+        $this->resetTableSearch();
+        $this->removeTableFilters();
+    }
+
+    public function toggleCompany(int $companyId): void
+    {
+        $expanded = $this->expandedCompanyIds();
+        $this->expandedCompanies = in_array($companyId, $expanded, true)
+            ? array_values(array_diff($expanded, [$companyId])) : [...$expanded, $companyId];
+    }
+
+    private function expandedCompanyIds(): array
+    {
+        // Dashboard links open only the companies containing matching computers.
+        return $this->expandedCompanies ??= $this->navigationFilters === [] ? [] : Computer::query()
+            ->inCommercialStatus($this->navigationFilters['status']['value'] ?? null)
+            ->expiringBetween($this->navigationFilters['expiry']['from'] ?? null, $this->navigationFilters['expiry']['until'] ?? null)
+            ->distinct()->pluck('company_id')->all();
+    }
+
+    private function allCompaniesOverview(): array
+    {
+        $companies = $this->companiesQuery()->orderBy('name')
+            ->get(['id', 'name', 'is_present', 'is_suspended', 'technical_product', 'technical_license_type', 'technical_expires_on']);
+        $statuses = Computer::query()->whereIn('company_id', $companies->modelKeys())->with('periods')
+            ->get(['id', 'company_id', 'activated_on', 'expires_on'])
+            ->groupBy('company_id')->map(fn ($computers) => $computers->countBy(fn (Computer $computer): string => $computer->commercialStatus()));
+        [$urgent, $others] = $companies->partition(fn (Company $company): bool => ($statuses[$company->id]['Scaduta'] ?? 0) + ($statuses[$company->id]['In scadenza'] ?? 0) > 0);
+
+        return ['companies' => $urgent->concat($others), 'statuses' => $statuses, 'expanded' => $this->expandedCompanyIds()];
     }
 
     private function companiesQuery(): Builder
@@ -242,19 +282,7 @@ class Licenze extends Dashboard implements HasTable
                 SelectFilter::make('status')->label('Stato commerciale')->options([
                     'missing' => 'Da completare', 'expired' => 'Scaduta', 'expiring' => 'In scadenza entro 30 giorni',
                     'active' => 'Attiva', 'future' => 'Da attivare',
-                ])->query(function (Builder $query, array $data): Builder {
-                    $day = today('Europe/Rome')->toDateString();
-                    $horizon = today('Europe/Rome')->addDays(30)->toDateString();
-
-                    return match ($data['value'] ?? null) {
-                        'missing' => $query->where(fn (Builder $q): Builder => $q->whereNull(DB::raw(Computer::commercialDateSql('activated_on')))->orWhereNull(DB::raw(Computer::commercialDateSql('expires_on')))),
-                        'expired' => $query->whereNotNull(DB::raw(Computer::commercialDateSql('activated_on')))->whereDate(DB::raw(Computer::commercialDateSql('expires_on')), '<', $day),
-                        'expiring' => $query->whereDate(DB::raw(Computer::commercialDateSql('activated_on')), '<=', $day)->whereDate(DB::raw(Computer::commercialDateSql('expires_on')), '>=', $day)->whereDate(DB::raw(Computer::commercialDateSql('expires_on')), '<=', $horizon),
-                        'active' => $query->whereDate(DB::raw(Computer::commercialDateSql('activated_on')), '<=', $day)->whereDate(DB::raw(Computer::commercialDateSql('expires_on')), '>', $horizon),
-                        'future' => $query->whereNotNull(DB::raw(Computer::commercialDateSql('expires_on')))->whereDate(DB::raw(Computer::commercialDateSql('activated_on')), '>', $day),
-                        default => $query,
-                    };
-                }),
+                ])->query(fn (Builder $query, array $data): Builder => $query->inCommercialStatus($data['value'] ?? null)),
                 Filter::make('expiry')->label('Scadenza commerciale')->schema([
                     TextInput::make('from')->label('Scadenza dal')->type('date')->rules(['nullable', 'date_format:Y-m-d']),
                     TextInput::make('until')->label('Scadenza al')->type('date')->rules(['nullable', 'date_format:Y-m-d'])
@@ -267,8 +295,7 @@ class Licenze extends Dashboard implements HasTable
                         return $query->whereRaw('1 = 0');
                     }
 
-                    return $query->when(filled($data['from'] ?? null), fn (Builder $query): Builder => $query->whereDate(DB::raw(Computer::commercialDateSql('expires_on')), '>=', $data['from']))
-                        ->when(filled($data['until'] ?? null), fn (Builder $query): Builder => $query->whereDate(DB::raw(Computer::commercialDateSql('expires_on')), '<=', $data['until']));
+                    return $query->expiringBetween($data['from'] ?? null, $data['until'] ?? null);
                 })->indicateUsing(function (array $data): array {
                     $indicators = [];
                     foreach (['from' => 'Scadenza dal ', 'until' => 'Scadenza al '] as $key => $label) {

@@ -328,6 +328,22 @@ class Company extends Model
         return $period?->product;
     }
 
+    /** @return array{0: string, 1: string} GravityZone company-level label and color, independent of PC commercial dates. */
+    public function technicalStatus(): array
+    {
+        $today = today('Europe/Rome');
+
+        return match (true) {
+            ! $this->is_present => ['Non più rilevata', 'gray'],
+            $this->is_suspended === true => ['Sospesa', 'danger'],
+            $this->technical_expires_on === null => ['Scadenza non disponibile', 'gray'],
+            $this->technical_expires_on->lt($today) => ['Scaduta', 'danger'],
+            $this->technical_expires_on->lte($today->addDays(30)) => ['In scadenza', 'warning'],
+            $this->is_suspended === null => ['Stato non disponibile', 'gray'],
+            default => ['Attiva', 'success'],
+        };
+    }
+
     protected function casts(): array
     {
         return [

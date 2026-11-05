@@ -84,17 +84,29 @@ documentali, con i limiti descritti in [docs/gravityzone-api.md](docs/gravityzon
 
 ### Licenze: un’unica vista operativa
 
-Dopo il login si apre **Licenze** (`/admin`). Il selettore ricercabile permette
-di scegliere un’azienda; la stessa tabella mostra il riepilogo della sua licenza
-tecnica GravityZone e i computer con prodotto aziendale da API, attivazione, scadenza commerciale
-e stato. Il riepilogo tecnico resta separato dalle date locali delle righe PC.
-**Tutte le Aziende** mostra una tabella distinta per ogni azienda, in ordine
-alfabetico, con nome, riepilogo e controlli propri. Il pulsante **Aggiungi PC
-manuale** di ciascuna tabella usa quella azienda.
+Dopo il login si apre **Licenze** (`/admin`). Accanto alla tabella, l’elenco
+delle aziende è sempre visibile: ricerca immediata anche senza accenti, un
+pallino per lo stato della licenza aziendale GravityZone (attiva, in scadenza
+entro 30 giorni, scaduta o sospesa, non disponibile) e il numero di computer.
+Un clic apre l’azienda e aggiorna l’URL (`/admin?company=ID`). La tabella mostra
+il riepilogo della licenza tecnica GravityZone e i computer con prodotto
+aziendale da API, attivazione, scadenza commerciale e stato. Il riepilogo
+tecnico resta separato dalle date locali delle righe PC.
 
-Il filtro **Licenza**, accanto ad Azienda, mostra tutte le aziende con il
-prodotto aziendale GravityZone selezionato e restringe le opzioni del selettore
-aziendale. Svuotandolo si torna a tutte le licenze, anche quelle sconosciute.
+Sopra l’elenco, i pulsanti **Licenza** (Tutte e le licenze aziendali presenti)
+restringono le aziende al prodotto GravityZone scelto. Se l’azienda aperta ha
+quella licenza resta aperta; altrimenti si passa a **Tutte le aziende**.
+Quando lo spazio non basta per elenco e tabella affiancati (schermi stretti,
+mobile, o circa 1.600 px con la barra laterale espansa), l’elenco si apre da una
+barra compatta sopra la tabella. La barra laterale del pannello si può ridurre
+a icone per recuperare spazio.
+
+**Tutte le aziende** mostra una sezione richiudibile per azienda: chiusa,
+riporta prodotto, scadenza tecnica e contatori dei PC scaduti, in scadenza e
+da completare; aperta, la tabella completa dell’azienda con riepilogo, controlli
+e **Aggiungi PC manuale** propri. Le aziende con PC scaduti o in scadenza sono
+in cima, poi le altre in ordine alfabetico. I link della Dashboard con stato o
+date aprono soltanto le aziende con computer corrispondenti.
 
 Un nuovo computer GravityZone compare automaticamente come **Da completare**.
 La matita o il clic sulla riga apre la modale di modifica, senza espansioni. Nome tecnico e prodotto aziendale
@@ -103,7 +115,7 @@ sono facoltativi e modificabili. Per quelli collegati, il ciclo mostra vendita,
 rinnovi e upgrade: date e riferimenti si correggono nell’operazione
 tramite **Vendite e rinnovi**; nome manuale e note restano modificabili sul PC.
 La colonna **Licenza** mostra sempre il prodotto aziendale GravityZone per
-ogni PC, anche nelle tabelle di **Tutte le Aziende**; se manca, compare
+ogni PC, anche nelle tabelle di **Tutte le aziende**; se manca, compare
 **Non fornito dall’API**. Il tooltip chiarisce che è la licenza aziendale.
 La colonna **Stato licenza GZ** mostra lo stato tecnico del singolo PC
 (licenza attiva, scaduta, autenticazione in attesa, assente/non applicabile),
