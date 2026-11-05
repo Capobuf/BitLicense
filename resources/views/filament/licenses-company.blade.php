@@ -30,9 +30,17 @@
                     <p class="fi-ta-header-description">GravityZone · {{ $company->technical_license_type ?? 'Tipo non disponibile' }}</p>
                 </div>
                 @if ($showCompanyName ?? false)
-                    @foreach ($this->getCachedHeaderActions() as $action)
-                        {{ $action }}
-                    @endforeach
+                    <div class="bl-company-license-actions">
+                        @foreach ($this->getCachedHeaderActions() as $action)
+                            {{ $action }}
+                        @endforeach
+                        <x-filament::icon-button
+                            icon="heroicon-m-chevron-up"
+                            color="gray"
+                            :label="'Comprimi '.$company->name"
+                            wire:click="$parent.toggleCompany({{ $company->id }})"
+                        />
+                    </div>
                 @endif
             </div>
             <dl class="bl-company-kpis" aria-label="Riepilogo aziendale">

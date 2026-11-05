@@ -334,3 +334,23 @@ l’autorizzazione prevista. Safari, Firefox e dispositivi fisici non verificati
 Branch `issue/17-collaudo-licenze`, nessun commit/push/PR di queste modifiche.
 Prima del push è richiesta la revisione del diff completo e l’approvazione
 esplicita prevista da AGENTS.md; il merge richiede approvazione separata.
+
+## Selezione aziende e licenze — issue #36 (05/11/2026)
+
+Perimetro approvato in chat: elenco laterale ricercabile al posto dei menu
+Azienda/Licenza, licenza come pulsanti a scelta singola, selettore compatto
+quando lo spazio non basta, sezioni richiudibili per **Tutte le aziende**.
+
+| Verifica | Esito |
+| --- | --- |
+| Suite completa SQLite isolata (`vendor/bin/phpunit`) | 383 test, 2.789 asserzioni, tutti superati |
+| `vendor/bin/pint --test`, `git diff --check` | Superati |
+| Chromium 1920×1080, 1440×1000 e 390×844, tema scuro, dati fittizi anonimi su SQLite isolato | Elenco affiancato a 1920; barra compatta a 1440 con barra laterale espansa e su mobile; nessun errore JS |
+| Ricerca «caffe» → «Caffè Centrale»; clic su azienda, URL `?company=ID` | Superato |
+| Pulsante licenza: azienda compatibile resta aperta, altrimenti **Tutte le aziende** | Superato (test automatico e browser) |
+| Sezioni chiuse, ordine per PC scaduti/in scadenza, apertura e chiusura dalla riga e dalla freccia | Superato |
+| Link Dashboard `?company=all&status=expired`: aperte solo le aziende con PC scaduti | Superato |
+| Modale di modifica da tabella singola e da sezione aperta | Superato |
+
+Nessuna chiamata API o modifica dati durante caricamento e selezione.
+Non verificato: database MySQL/MariaDB di sviluppo e dati reali; screen reader reale.

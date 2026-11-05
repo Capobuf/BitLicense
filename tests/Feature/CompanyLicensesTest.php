@@ -9,7 +9,6 @@ use App\Models\Computer;
 use App\Models\User;
 use Filament\Actions\Testing\TestAction;
 use Filament\Facades\Filament;
-use Filament\Forms\Components\Select;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Livewire\Features\SupportLockedProperties\CannotUpdateLockedPropertyException;
@@ -28,14 +27,18 @@ class CompanyLicensesTest extends TestCase
         Http::preventStrayRequests();
     }
 
-    public function test_all_companies_includes_empty_companies_and_switches_back_to_one_table_without_api_calls(): void
+    public function test_all_companies_start_collapsed_expand_on_demand_and_switch_back_to_one_table_without_api_calls(): void
     {
         $company = $this->company('Prima');
         $empty = $this->company('Vuota');
         $pc = Computer::create(['company_id' => $company->id, 'name' => 'PC locale']);
         Livewire::test(Licenze::class)->set('data.company_id', 'all')
-            ->assertSeeLivewire(CompanyLicenses::class)->assertActionHidden('create')
-            ->set('data.company_id', $company->id)->assertCanSeeTableRecords([$pc])->assertActionEnabled('create');
+            ->assertDontSeeLivewire(CompanyLicenses::class)->assertSee(['Prima', 'Vuota'])->assertDontSee('PC locale')->assertActionHidden('create')
+            ->call('toggleCompany', $empty->id)->assertSeeLivewire(CompanyLicenses::class)->assertSet('expandedCompanies', [$empty->id])
+            ->call('toggleCompany', $empty->id)->assertDontSeeLivewire(CompanyLicenses::class)
+            ->call('toggleCompany', $company->id)->assertSee('PC locale')
+            ->set('data.company_id', $company->id)->assertSet('expandedCompanies', null)
+            ->assertCanSeeTableRecords([$pc])->assertActionEnabled('create');
         $page = Livewire::test(CompanyLicenses::class, ['companyId' => $empty->id])->assertCountTableRecords(0);
         $this->assertSame($empty->id, $page->instance()->getTable()->getHeader()->getData()['company']->id);
         Http::assertNothingSent();
@@ -93,23 +96,42 @@ class CompanyLicensesTest extends TestCase
             $pcs[] = Computer::create(['company_id' => $company->id, 'name' => 'PC filtro '.$company->id]);
         }
         $before = Computer::orderBy('id')->get()->toArray();
-        $page = Livewire::test(Licenze::class)->set('data.company_id', $other->id)
+        $page = Livewire::test(Licenze::class)
+            ->assertSeeHtmlInOrder(['aria-pressed="true"', 'Tutte', 'Bitdefender EDR', 'title="Endpoint Security · MSP Secure"'])
+            ->set('data.company_id', $other->id)
             ->set('data.license', 'Endpoint Security · MSP Secure')->assertSet('data.company_id', 'all')
-            ->assertActionHidden('create')->assertSee($pcs[0]->name)->assertSee($pcs[1]->name)
-            ->assertDontSee($pcs[2]->name)->assertDontSee($pcs[3]->name)
-            ->assertFormFieldExists('company_id', function (Select $field) use ($first, $second): bool {
-                $this->assertSame(['all', $first->id, $second->id], array_keys($field->getOptions()));
-                $this->assertSame([], $field->getSearchResults('Altra'));
-
-                return true;
-            })
-            ->assertFormFieldExists('license', fn (Select $field): bool => array_keys($field->getOptions()) === ['Bitdefender EDR', 'Endpoint Security · MSP Secure']);
+            ->assertActionHidden('create')->assertSee(['Prima', 'Seconda'])->assertDontSee(['Altra', 'Sconosciuta'])
+            ->call('toggleCompany', $first->id)->assertSee($pcs[0]->name)->assertDontSee([$pcs[2]->name, $pcs[3]->name])
+            ->call('toggleCompany', $second->id)->assertSee($pcs[1]->name);
         $page->set('data.company_id', $first->id)->assertCanSeeTableRecords([$pcs[0]])->assertCountTableRecords(1);
+        // Clearing or keeping a compatible license does not move the operator away from the open company.
+        $page->set('data.license', null)->assertSet('data.company_id', $first->id)
+            ->set('data.license', 'Endpoint Security · MSP Secure')->assertSet('data.company_id', $first->id)->assertCountTableRecords(1);
         $page->set('data.license', 'Bitdefender EDR')->assertSet('data.company_id', 'all')
-            ->assertSee($pcs[2]->name)->assertDontSee($pcs[0]->name)->assertDontSee($pcs[1]->name)->assertDontSee($pcs[3]->name);
-        $page->set('data.license', null)->assertSet('data.company_id', 'all')->assertSee($pcs[3]->name)
-            ->assertFormFieldExists('company_id', fn (Select $field): bool => count($field->getOptions()) === 5);
-        $page->set('data.license', 'Prodotto non presente')->assertSee('Nessuna azienda da mostrare.');
+            ->assertSee('Altra')->assertDontSee(['Prima', 'Seconda', 'Sconosciuta']);
+        $page->set('data.license', null)->assertSet('data.company_id', 'all')->assertSee(['Prima', 'Seconda', 'Altra', 'Sconosciuta']);
+        $page->set('data.license', 'Prodotto non presente')->assertSee(['Nessuna azienda da mostrare.', 'Nessuna azienda con questa licenza.']);
+        $this->assertSame($before, Computer::orderBy('id')->get()->toArray());
+        Http::assertNothingSent();
+    }
+
+    public function test_all_companies_put_commercial_attention_first_and_dashboard_filters_expand_only_matching_companies(): void
+    {
+        $this->travelTo(new \DateTimeImmutable('2026-11-03 12:00 Europe/Rome'));
+        $alpha = $this->company('Alfa');
+        $beta = $this->company('Beta');
+        $gamma = $this->company('Gamma');
+        Computer::create(['company_id' => $alpha->id, 'name' => 'PC alfa da completare']);
+        Computer::create(['company_id' => $beta->id, 'name' => 'PC beta scaduto'])->forceFill(['activated_on' => '2025-01-01', 'expires_on' => '2026-11-02'])->save();
+        Computer::create(['company_id' => $gamma->id, 'name' => 'PC gamma in scadenza'])->forceFill(['activated_on' => '2026-01-01', 'expires_on' => '2026-12-03'])->save();
+        $before = Computer::orderBy('id')->get()->toArray();
+
+        Livewire::test(Licenze::class)->set('data.company_id', 'all')
+            ->assertSeeHtmlInOrder(["toggleCompany({$beta->id})", "toggleCompany({$gamma->id})", "toggleCompany({$alpha->id})"])
+            ->assertSee(['1 scadute', '1 in scadenza', '1 da completare'])->assertDontSeeLivewire(CompanyLicenses::class);
+        Livewire::withQueryParams(['company' => 'all', 'status' => 'expired'])->test(Licenze::class)
+            ->assertSet('expandedCompanies', [$beta->id])->assertSee('PC beta scaduto')
+            ->assertDontSee(['PC gamma in scadenza', 'PC alfa da completare']);
         $this->assertSame($before, Computer::orderBy('id')->get()->toArray());
         Http::assertNothingSent();
     }

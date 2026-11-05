@@ -33,7 +33,7 @@ class LicenzeFilterPersistenceTest extends TestCase
         $page = Livewire::test(Licenze::class)->assertSet('data.company_id', $company->id)->assertSet('data.license', 'Endpoint Security')
             ->assertSet('tableFilters.status.value', 'missing')->assertSet('tableFilters.expiry.from', '2026-01-01');
         $page->removeTableFilters()->set('data.license', null);
-        Livewire::test(Licenze::class)->assertSet('data.company_id', 'all')->assertSet('data.license', null)
+        Livewire::test(Licenze::class)->assertSet('data.company_id', $company->id)->assertSet('data.license', null)
             ->assertSet('tableFilters.status.value', null)->assertSet('tableFilters.expiry.from', null);
         Http::assertNothingSent();
     }
@@ -48,7 +48,8 @@ class LicenzeFilterPersistenceTest extends TestCase
         Livewire::test(CompanyLicenses::class, ['companyId' => $first->id])->filterTable('status', 'expired');
         Livewire::test(CompanyLicenses::class, ['companyId' => $second->id])->filterTable('status', 'missing');
         Livewire::test(Licenze::class)->assertSet('data.company_id', 'all')->assertSet('data.license', 'Endpoint Security')
-            ->assertDontSee('Prima vuota')->assertSee('Seconda vuota');
+            ->call('toggleCompany', $first->id)->assertSeeLivewire(CompanyLicenses::class)->assertDontSee('Prima vuota')
+            ->call('toggleCompany', $second->id)->assertSee('Seconda vuota');
         Livewire::test(CompanyLicenses::class, ['companyId' => $first->id])->assertSet('tableFilters.status.value', 'expired');
         Livewire::test(CompanyLicenses::class, ['companyId' => $second->id])->assertSet('tableFilters.status.value', 'missing');
         Http::assertNothingSent();

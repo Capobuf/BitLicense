@@ -31,6 +31,7 @@ class AdminPanelProvider extends PanelProvider
             ->profile()
             ->brandName('BitLicense')
             ->defaultThemeMode(ThemeMode::Dark)
+            ->sidebarCollapsibleOnDesktop()
             ->colors([
                 'primary' => Color::Indigo,
             ])
