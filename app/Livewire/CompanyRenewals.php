@@ -17,7 +17,7 @@ use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Notifications\Notification;
-use Filament\Schemas\Components\Actions;
+use Filament\Schemas\Components\Grid;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
@@ -53,6 +53,9 @@ class CompanyRenewals extends Component implements HasActions, HasSchemas, HasTa
     public ?int $computerId = null;
 
     #[Locked]
+    public bool $computerContext = false;
+
+    #[Locked]
     public array $expectedVersions = [];
 
     #[Locked]
@@ -66,8 +69,10 @@ class CompanyRenewals extends Component implements HasActions, HasSchemas, HasTa
         Gate::authorize('viewAny', Company::class);
     }
 
-    public function mount(int $companyId, ?int $computerId = null): void
+    public function mount(int $companyId, ?int $computerId = null, bool $computerContext = false): void
     {
+        abort_if($computerContext && $computerId === null, 404);
+        $this->computerContext = $computerContext;
         $this->companyId = Company::findOrFail($companyId)->id;
         $this->computerId = $computerId === null ? null : Computer::where('company_id', $companyId)->findOrFail($computerId)->id;
     }
@@ -84,10 +89,10 @@ class CompanyRenewals extends Component implements HasActions, HasSchemas, HasTa
             ->defaultSort('id', 'desc')->stackedOnMobile()->recordAction('view')
             ->columns([
                 TextColumn::make('reference')->label('Operazione')->weight('semibold')
-                    ->description(fn (CompanyRenewal $record): string => $record->is_regrouped ? 'PC spostati · storico conservato' : ($record->detection_month ? 'Prima vendita · '.substr($record->detection_month, 5).'/'.substr($record->detection_month, 0, 4) : CompanyRenewal::KINDS[$record->kind])),
+                    ->description(fn (CompanyRenewal $record): string => $record->is_regrouped ? 'PC spostati · storico conservato' : $record->label.($record->detection_month ? ' · rilevata '.substr($record->detection_month, 5).'/'.substr($record->detection_month, 0, 4) : '')),
                 TextColumn::make('occurred_on')->label('Data operazione')->date()->placeholder('Da verificare')->sortable(),
                 TextColumn::make('quantity')->label('Licenze')->numeric()
-                    ->description(fn (CompanyRenewal $record): ?string => $record->kind === 'upgrade' ? 'Intera azienda' : $record->periods->count().' PC collegati'),
+                    ->description(fn (CompanyRenewal $record): string => $record->kind === 'upgrade' ? 'Intera azienda' : $record->periods->count().' PC associati · '.max(0, $record->quantity - $record->periods->count()).' disponibili'),
                 TextColumn::make('price_cents')->label('Totale operazione')->placeholder('Non indicato')
                     ->formatStateUsing(fn (int $state): string => '€ '.str_replace('.', ',', Euro::fromCents($state))),
             ])
@@ -97,11 +102,13 @@ class CompanyRenewals extends Component implements HasActions, HasSchemas, HasTa
             ->headerActions([
                 $this->createOperationAction('create', 'Vendita o rinnovo', 'initial'),
                 $this->createOperationAction('upgrade', 'Upgrade aziendale', 'upgrade')->color('gray'),
+                $this->createOperationAction('newSale', 'Nuova vendita', 'initial')->visible($this->computerContext),
+                $this->associateRenewalAction()->visible($this->computerContext),
             ])
             ->recordActions([
                 $this->moveComputersAction(),
                 Action::make('view')->label('Dettagli')->icon(Heroicon::OutlinedEye)->iconButton()->tooltip('Consulta operazione')
-                    ->modalHeading(fn (CompanyRenewal $record): string => $record->reference.' · '.CompanyRenewal::KINDS[$record->kind])
+                    ->modalHeading(fn (CompanyRenewal $record): string => $record->reference.' · '.$record->label)
                     ->modalWidth('5xl')->modalSubmitAction(false)->modalCancelActionLabel('Chiudi')
                     ->schema([\Filament\Schemas\Components\View::make('filament.commercial-operation')->viewData(fn (CompanyRenewal $record): array => ['operation' => $record])]),
                 Action::make('link')->label('Collega computer')->icon(Heroicon::OutlinedLink)
@@ -113,34 +120,34 @@ class CompanyRenewals extends Component implements HasActions, HasSchemas, HasTa
                     ->fillForm(function (CompanyRenewal $record): array {
                         $data = $this->operationData($record);
                         $this->linkingLegacy = true;
-                        $data['common_start'] = $record->starts_on->toDateString();
-                        $data['common_end'] = $record->expires_on->toDateString();
 
                         return $data;
                     })
                     ->action(fn (array $data, Schema $schema, Action $action, CompanyRenewal $record) => $this->saveOperation($data, $schema, $action, $record)),
-                Action::make('edit')->label('Correggi')->icon(Heroicon::OutlinedPencilSquare)->iconButton()->tooltip('Correggi operazione')
+                Action::make('edit')->label('Modifica')->icon(Heroicon::OutlinedPencilSquare)->iconButton()->tooltip(fn (CompanyRenewal $record): string => $record->kind === 'renewal' ? 'Gestisci rinnovo e computer' : 'Correggi operazione')
                     ->authorize(fn (): bool => Gate::allows('update', Company::findOrFail($this->companyId)))
-                    ->modalHeading(fn (CompanyRenewal $record): string => 'Correggi '.$record->reference)
-                    ->modalDescription('La correzione conserva l’operazione. Per acquistare un nuovo periodo registra un rinnovo.')
-                    ->modalWidth('5xl')->modalSubmitActionLabel('Salva correzione')->schema($this->operationFields())
+                    ->modalHeading(fn (CompanyRenewal $record): string => ($record->kind === 'renewal' ? 'Gestisci rinnovo ' : 'Correggi ').$record->reference)
+                    ->modalWidth('5xl')->modalSubmitActionLabel('Salva modifiche')->schema($this->operationFields())
                     ->fillForm(fn (CompanyRenewal $record): array => $this->operationData($record))
                     ->action(fn (array $data, Schema $schema, Action $action, CompanyRenewal $record) => $this->saveOperation($data, $schema, $action, $record)),
             ])
-            ->emptyStateHeading('Collega le licenze alla loro vendita')
-            ->emptyStateDescription('Registra una vendita o un rinnovo e scegli i computer. Periodi e storico saranno consultabili anche dal singolo PC.');
+            ->emptyStateHeading('Nessuna vendita o rinnovo')
+            ->emptyStateDescription('Registra il rinnovo delle licenze aziendali. Puoi associare i computer anche in seguito.');
     }
 
     private function createOperationAction(string $name, string $label, string $kind): Action
     {
         return Action::make($name)->label($label)->icon($kind === 'upgrade' ? Heroicon::OutlinedArrowUpCircle : Heroicon::OutlinedPlus)
             ->authorize(fn (): bool => Gate::allows('update', Company::findOrFail($this->companyId)))
-            ->modalHeading($kind === 'upgrade' ? 'Aggiorna la licenza aziendale' : 'Registra vendita o rinnovo')
+            ->modalHeading($kind === 'upgrade' ? 'Aggiorna la licenza aziendale' : ($name === 'newSale' ? 'Registra nuova vendita' : 'Registra vendita o rinnovo'))
             ->modalWidth('5xl')->modalSubmitActionLabel('Registra operazione')->schema($this->operationFields())
-            ->fillForm(function () use ($kind): array {
+            ->fillForm(function () use ($kind, $name): array {
                 $this->linkingLegacy = false;
                 $this->captureVersions();
                 $pc = $this->computerId === null ? null : $this->computers->find($this->computerId);
+                if ($name === 'newSale' && $pc?->periods->isNotEmpty()) {
+                    $pc = null;
+                }
                 $renewal = $pc?->periods->isNotEmpty() ?? false;
 
                 return [
@@ -153,18 +160,53 @@ class CompanyRenewals extends Component implements HasActions, HasSchemas, HasTa
             ->action(fn (array $data, Schema $schema, Action $action) => $this->saveOperation($data, $schema, $action));
     }
 
+    private function associateRenewalAction(): Action
+    {
+        return Action::make('associateRenewal')->label('Associa a rinnovo')->icon(Heroicon::OutlinedLink)
+            ->authorize(fn (): bool => Gate::allows('update', Company::findOrFail($this->companyId)))
+            ->modalHeading('Associa il computer a un rinnovo aziendale')->modalWidth('lg')->modalSubmitActionLabel('Conferma associazione')
+            ->fillForm(function (): array {
+                $this->captureVersions();
+                $this->expectedVersions = CompanyRenewal::where('company_id', $this->companyId)->where('kind', 'renewal')->pluck('version', 'id')->all();
+
+                return [];
+            })
+            ->schema([
+                Select::make('renewal_id')->label('Rinnovo aziendale')->required()->searchable()->live()
+                    ->noOptionsMessage('Nessun rinnovo con licenze disponibili. Registra il rinnovo dall’azienda.')
+                    ->options(fn (): array => CompanyRenewal::where('company_id', $this->companyId)->where('kind', 'renewal')->whereNotNull('occurred_on')
+                        ->withCount('periods')->whereDoesntHave('periods', fn ($query) => $query->where('computer_id', $this->computerId))->get()
+                        ->filter(fn (CompanyRenewal $renewal): bool => $renewal->quantity > $renewal->periods_count)
+                        ->mapWithKeys(fn (CompanyRenewal $renewal): array => [$renewal->id => $renewal->reference.' · '.$renewal->starts_on->format('d/m/Y').' → '.($renewal->expires_on?->format('d/m/Y') ?? 'Da completare').' · '.($renewal->quantity - $renewal->periods_count).' disponibili'])->all())
+                    ->afterStateUpdated(function ($state, Set $set): void {
+                        $renewal = CompanyRenewal::where('company_id', $this->companyId)->where('kind', 'renewal')->find($state);
+                        $set('starts_on', $renewal?->starts_on?->toDateString());
+                        $set('expires_on', $renewal?->expires_on?->toDateString());
+                    }),
+                DatePicker::make('starts_on')->label('Inizio per questo PC')->native(false)->displayFormat('d/m/Y')->required(),
+                DatePicker::make('expires_on')->label('Scadenza per questo PC')->native(false)->displayFormat('d/m/Y')->required()->afterOrEqual('starts_on'),
+            ])
+            ->action(function (array $data, Schema $schema, Action $action): void {
+                $renewal = CompanyRenewal::where('company_id', $this->companyId)->where('kind', 'renewal')->whereNotNull('occurred_on')->findOrFail($data['renewal_id']);
+                $operation = $this->operationData($renewal, captureVersions: false);
+                unset($operation['computer_ids']);
+                $operation['periods'][] = ['computer_id' => $this->computerId, 'starts_on' => $data['starts_on'], 'expires_on' => $data['expires_on']];
+                $this->saveOperation($operation, $schema, $action, $renewal);
+            });
+    }
+
     private function moveComputersAction(): Action
     {
         return Action::make('moveComputers')->label('Sposta PC')->icon(Heroicon::OutlinedArrowsRightLeft)->iconButton()->tooltip('Sposta in un’altra vendita')
             ->visible(fn (CompanyRenewal $record): bool => $record->kind === 'initial' && $record->periods->isNotEmpty())
             ->authorize(fn (): bool => Gate::allows('update', Company::findOrFail($this->companyId)))
             ->modalHeading('Sposta i computer in un’altra vendita')->modalWidth('lg')->modalSubmitActionLabel('Conferma spostamento')
-            ->modalDescription('Per esempio, riunisci i PC rilevati il mese successivo alla vendita originale. Le date individuali e i rinnovi restano invariati. Importi e riferimenti delle due operazioni non vengono sommati o spostati.')
-            ->fillForm(function (): array {
+            ->modalDescription('Cambia la vendita di appartenenza. Date, rinnovi e riferimenti restano conservati.')
+            ->fillForm(function (CompanyRenewal $record): array {
                 $this->captureVersions();
                 $this->expectedVersions = CompanyRenewal::where('company_id', $this->companyId)->pluck('version', 'id')->all();
 
-                return [];
+                return ['computer_ids' => $this->computerId !== null && $record->periods->contains('computer_id', $this->computerId) ? [$this->computerId] : []];
             })
             ->schema([
                 Select::make('computer_ids')->label('Computer da spostare')->multiple()->searchable()->required()
@@ -193,20 +235,52 @@ class CompanyRenewals extends Component implements HasActions, HasSchemas, HasTa
     private function operationFields(): array
     {
         return [
-            Section::make('Operazione')->columns(2)->schema([
+            Grid::make(3)->schema([
                 Select::make('kind')->label('Tipo')->options(CompanyRenewal::KINDS)->required()->live()
-                    ->disabled(fn (?CompanyRenewal $record): bool => $record !== null)->dehydrated(),
+                    ->disabled(fn (?CompanyRenewal $record): bool => $record !== null)->dehydrated()
+                    ->afterStateUpdated(function (?string $state, ?string $old, Get $get, Set $set): void {
+                        if (! in_array($old, ['initial', 'renewal']) || ! in_array($state, ['initial', 'renewal'])) {
+                            return;
+                        }
+                        $set('periods', array_map(function (array $row) use ($state, $old): array {
+                            $pc = $this->computers->find($row['computer_id']);
+                            if ($pc === null) {
+                                return $row;
+                            }
+                            $before = $this->periodData($pc, $old);
+                            $after = $this->periodData($pc, $state);
+                            foreach (['starts_on', 'expires_on'] as $field) {
+                                if (($row[$field] ?? null) === $before[$field]) {
+                                    $row[$field] = $after[$field];
+                                }
+                            }
+
+                            return $row;
+                        }, $get('periods') ?? []));
+                    }),
                 DatePicker::make('occurred_on')->label('Data operazione')->native(false)->displayFormat('d/m/Y')
                     ->required(fn (?CompanyRenewal $record): bool => $record === null || $record->occurred_on !== null || $this->linkingLegacy),
-                TextInput::make('quantity')->label('Quantità venduta')->numeric()->integer()->minValue(fn (?CompanyRenewal $record): int => $record?->is_regrouped ? 0 : 1)->maxValue(4294967295)
+                TextInput::make('quantity')->label(fn (Get $get): string => $get('kind') === 'renewal' ? 'Licenze rinnovate' : 'Numero licenze')->live(onBlur: true)->numeric()->integer()->minValue(fn (?CompanyRenewal $record): int => $record?->is_regrouped ? 0 : 1)->maxValue(4294967295)
                     ->required()->visible(fn (Get $get): bool => $get('kind') !== 'upgrade')
-                    ->helperText('Può includere licenze non ancora collegate a un computer.'),
+                    ->hintIcon(Heroicon::OutlinedInformationCircle, tooltip: 'Può includere licenze non ancora collegate a un computer.'),
             ]),
-            Section::make('Computer e periodi')->description('Ogni computer conserva il proprio periodo. Puoi uniformare le date o mantenerle differenti.')
+            Section::make('Validità del rinnovo')->contained(false)->columns(2)
+                ->visible(fn (Get $get, ?CompanyRenewal $record): bool => $get('kind') === 'renewal' && ($record === null || $record->occurred_on !== null || $this->linkingLegacy))
+                ->schema([
+                    DatePicker::make('starts_on')->label('Inizio')->native(false)->displayFormat('d/m/Y')->live()
+                        ->required(fn (Get $get): bool => blank($get('periods')))->requiredWith('expires_on'),
+                    DatePicker::make('expires_on')->label('Scadenza inclusa')->native(false)->displayFormat('d/m/Y')->live()
+                        ->required(fn (Get $get): bool => blank($get('periods')))->requiredWith('starts_on')->afterOrEqual('starts_on'),
+                ]),
+            Section::make(fn (Get $get): string => $get('kind') === 'renewal' ? 'Computer associati (facoltativo)' : 'Computer')->contained(false)
+                ->collapsible(fn (Get $get): bool => $get('kind') === 'renewal')
+                ->collapsed(fn (Get $get): bool => $get('kind') === 'renewal' && blank($get('periods')))
+                ->description(fn (Get $get): ?string => $get('kind') === 'renewal'
+                    ? count($get('periods') ?? []).' PC associati · '.max(0, (int) $get('quantity') - count($get('periods') ?? [])).' licenze disponibili' : null)
                 ->visible(fn (Get $get, ?CompanyRenewal $record): bool => ! $record?->is_regrouped && $get('kind') !== 'upgrade' && ($record === null || $record->occurred_on !== null || $this->linkingLegacy))
                 ->schema([
                     Select::make('computer_ids')->label('Computer coinvolti')->multiple()->searchable()->live()->dehydrated(false)
-                        ->helperText('Nelle correzioni conserva i computer già presenti; puoi aggiungerne altri entro la quantità venduta.')
+                        ->helperText(fn (?CompanyRenewal $record): ?string => $record === null ? null : 'Conserva i PC già presenti. Puoi aggiungerne altri entro il numero di licenze.')
                         ->options(fn (): array => $this->computers->mapWithKeys(fn (Computer $pc): array => [$pc->id => $pc->display_name.' · '.($pc->expires_on?->format('d/m/Y') ?? 'senza scadenza')])->all())
                         ->afterStateUpdated(function (?array $state, Get $get, Set $set): void {
                             $existing = collect($get('periods') ?? [])->keyBy('computer_id');
@@ -214,26 +288,35 @@ class CompanyRenewals extends Component implements HasActions, HasSchemas, HasTa
                             foreach ($state ?? [] as $id) {
                                 $pc = $this->computers->find($id);
                                 if ($pc !== null) {
-                                    $rows[] = $existing->get($id) ?? $this->periodData($pc, $get('kind'));
+                                    $rows[] = $existing->get($id) ?? ($get('kind') === 'renewal' && filled($get('starts_on')) && filled($get('expires_on'))
+                                        ? ['computer_id' => $pc->id, 'starts_on' => $get('starts_on'), 'expires_on' => $get('expires_on')]
+                                        : $this->periodData($pc, $get('kind')));
                                 }
                             }
                             $set('periods', $rows);
-                            $set('quantity', max(count($rows), (int) $get('quantity'), 1));
+                            if ($get('kind') !== 'renewal') {
+                                $set('quantity', max(count($rows), (int) $get('quantity'), 1));
+                            }
                         }),
-                    Section::make('Date comuni')->compact()->columns(2)->schema([
-                        DatePicker::make('common_start')->label('Inizio per tutti')->native(false)->displayFormat('d/m/Y')->dehydrated(false),
-                        DatePicker::make('common_end')->label('Scadenza per tutti')->native(false)->displayFormat('d/m/Y')->dehydrated(false),
-                        Actions::make([
-                            Action::make('applyDates')->label('Applica ai computer selezionati')->color('gray')
-                                ->action(function (Get $get, Set $set): void {
-                                    $dates = validator(['start' => $get('common_start'), 'end' => $get('common_end')], [
-                                        'start' => ['required', 'date_format:Y-m-d'], 'end' => ['required', 'date_format:Y-m-d', 'after_or_equal:start'],
-                                    ])->validate();
-                                    $set('periods', array_map(fn (array $row): array => array_replace($row, ['starts_on' => $dates['start'], 'expires_on' => $dates['end']]), $get('periods') ?? []));
+                    Repeater::make('periods')->label('Periodi')->addable(false)->deletable(false)->reorderable(false)->defaultItems(0)->minItems(fn (Get $get): int => $get('kind') === 'renewal' ? 0 : 1)->required(fn (Get $get): bool => $get('kind') !== 'renewal')
+                        ->afterLabel([
+                            Action::make('applyDates')->label('Imposta date per tutti')->icon(Heroicon::OutlinedCalendarDays)->color('gray')
+                                ->visible(fn (Get $get): bool => filled($get('periods')))
+                                ->modalHeading('Imposta le date per tutti i PC')->modalWidth('md')
+                                ->modalDescription('Le date sostituiranno quelle delle righe selezionate. Potrai poi modificarle per ciascun PC.')
+                                ->modalSubmitActionLabel('Applica date')
+                                ->fillForm(fn (?CompanyRenewal $record): array => $this->linkingLegacy ? [
+                                    'starts_on' => $record?->starts_on?->toDateString(),
+                                    'expires_on' => $record?->expires_on?->toDateString(),
+                                ] : [])
+                                ->schema([
+                                    DatePicker::make('starts_on')->label('Inizio periodo')->native(false)->displayFormat('d/m/Y')->required(),
+                                    DatePicker::make('expires_on')->label('Scadenza inclusa')->native(false)->displayFormat('d/m/Y')->required()->afterOrEqual('starts_on'),
+                                ])
+                                ->action(function (array $data, Get $get, Set $set): void {
+                                    $set('periods', array_map(fn (array $row): array => array_replace($row, $data), $get('periods') ?? []));
                                 }),
-                        ])->columnSpanFull(),
-                    ]),
-                    Repeater::make('periods')->label('Validità per computer')->addable(false)->deletable(false)->reorderable(false)->defaultItems(0)->minItems(1)->required()
+                        ])
                         ->extraAttributes(['class' => 'bl-periods-table', 'tabindex' => '0'])
                         ->table([
                             TableColumn::make('Computer')->width('25%'),
@@ -263,14 +346,16 @@ class CompanyRenewals extends Component implements HasActions, HasSchemas, HasTa
                     TextEntry::make('assigned_licenses')->label('Licenze assegnate')->listWithLineBreaks()
                         ->state(fn (): array => $this->computers->map(fn (Computer $pc): string => $pc->display_name.' · '.($pc->company_product ?? 'Non disponibile'))->all()),
                 ]),
-            Section::make('Importo e riferimenti')->columns(2)->schema([
-                TextInput::make('amount')->label(fn (Get $get): string => $get('kind') === 'upgrade' ? 'Differenza complessiva' : 'Totale operazione')
-                    ->prefix('€')->inputMode('decimal')->nullable()->rules(['string', 'regex:'.Euro::PATTERN])->maxLength(12)
-                    ->required(fn (Get $get): bool => $get('kind') === 'upgrade')
-                    ->helperText('Importo inserito manualmente, senza ripartizioni o calcoli automatici.'),
-                TextInput::make('invoice_reference')->label('Riferimento fattura')->maxLength(255),
-                TextInput::make('quote_reference')->label('Riferimento preventivo')->maxLength(255),
-            ])->visible(fn (?CompanyRenewal $record): bool => $record === null || $record->occurred_on !== null || $this->linkingLegacy),
+            Section::make('Importo e riferimenti')->compact()->columns(2)
+                ->collapsible(fn (Get $get): bool => $get('kind') !== 'upgrade')
+                ->collapsed(fn (Get $get, ?CompanyRenewal $record): bool => $record === null && $get('kind') !== 'upgrade' && blank($get('amount')) && blank($get('invoice_reference')) && blank($get('quote_reference')))
+                ->schema([
+                    TextInput::make('amount')->label(fn (Get $get): string => $get('kind') === 'upgrade' ? 'Differenza complessiva' : 'Totale operazione')
+                        ->prefix('€')->inputMode('decimal')->nullable()->rules(['string', 'regex:'.Euro::PATTERN])->maxLength(12)
+                        ->required(fn (Get $get): bool => $get('kind') === 'upgrade'),
+                    TextInput::make('invoice_reference')->label('Riferimento fattura')->maxLength(255),
+                    TextInput::make('quote_reference')->label('Riferimento preventivo')->maxLength(255),
+                ])->visible(fn (?CompanyRenewal $record): bool => $record === null || $record->occurred_on !== null || $this->linkingLegacy),
         ];
     }
 
@@ -288,11 +373,13 @@ class CompanyRenewals extends Component implements HasActions, HasSchemas, HasTa
         $this->expectedComputerVersions = $this->computers->pluck('commercial_version', 'id')->all();
     }
 
-    private function operationData(CompanyRenewal $record): array
+    private function operationData(CompanyRenewal $record, bool $captureVersions = true): array
     {
         $this->linkingLegacy = false;
-        $this->captureVersions();
-        $this->expectedVersions = [$record->id => $record->version];
+        if ($captureVersions) {
+            $this->captureVersions();
+            $this->expectedVersions = [$record->id => $record->version];
+        }
 
         return $record->only(['kind', 'quantity', 'invoice_reference', 'quote_reference']) + [
             'occurred_on' => $record->occurred_on?->toDateString(), 'starts_on' => $record->starts_on?->toDateString(),
@@ -332,6 +419,8 @@ class CompanyRenewals extends Component implements HasActions, HasSchemas, HasTa
 
     public function render(): View
     {
-        return view('livewire.company-renewals');
+        return $this->computerContext
+            ? view('filament.computer-cycles', ['computer' => Computer::where('company_id', $this->companyId)->withCommercialPeriods()->findOrFail($this->computerId), 'interactive' => true])
+            : view('livewire.company-renewals');
     }
 }

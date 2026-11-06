@@ -164,13 +164,15 @@ class Company extends Model
                 'quote_reference' => ['nullable', 'string', 'max:255'],
                 'amount' => ['nullable', 'required_if:kind,upgrade', 'string', 'regex:'.Euro::PATTERN],
                 'quantity' => ['exclude_if:kind,upgrade', 'required', 'integer', $operation->is_regrouped ? 'min:0' : 'min:1', 'max:4294967295'],
-                'periods' => ['exclude_if:kind,upgrade', $operation->is_regrouped ? 'present' : 'required', 'array', $operation->is_regrouped ? 'min:0' : 'min:1'],
+                'starts_on' => ['exclude_unless:kind,renewal', 'nullable', Rule::requiredIf(($data['kind'] ?? null) === 'renewal' && empty($data['periods'])), 'required_with:expires_on', 'date_format:Y-m-d'],
+                'expires_on' => ['exclude_unless:kind,renewal', 'nullable', Rule::requiredIf(($data['kind'] ?? null) === 'renewal' && empty($data['periods'])), 'required_with:starts_on', 'date_format:Y-m-d', 'after_or_equal:starts_on'],
+                'periods' => ['exclude_if:kind,upgrade', 'present', 'array', $operation->is_regrouped || ($data['kind'] ?? null) === 'renewal' ? 'min:0' : 'min:1'],
                 'periods.*' => ['array:computer_id,starts_on,expires_on'],
                 'periods.*.computer_id' => ['required', 'integer', 'distinct'],
                 'periods.*.starts_on' => ['required', 'date_format:Y-m-d'],
                 'periods.*.expires_on' => [($operation->detection_month !== null || ($operation->exists && $operation->periods()->whereNull('expires_on')->exists())) ? 'nullable' : 'required', 'date_format:Y-m-d', 'after_or_equal:periods.*.starts_on'],
             ];
-            if (array_diff(array_keys($data), ['kind', 'occurred_on', 'invoice_reference', 'quote_reference', 'amount', 'quantity', 'periods'])) {
+            if (array_diff(array_keys($data), ['kind', 'occurred_on', 'starts_on', 'expires_on', 'invoice_reference', 'quote_reference', 'amount', 'quantity', 'periods'])) {
                 throw ValidationException::withMessages(['kind' => 'Sono modificabili soltanto i dati dell’operazione commerciale.']);
             }
             $data = Validator::make($data, $rules, [
@@ -250,8 +252,13 @@ class Company extends Model
                     $attributes['expires_on'] = max(array_column($snapshots, 'expires_on'));
                 }
             } else {
-                $attributes['starts_on'] = $periodRows->min('starts_on') ?? $operation->starts_on;
-                $attributes['expires_on'] = $periodRows->contains('expires_on', null) ? null : $periodRows->max('expires_on');
+                if ($data['kind'] === 'renewal') {
+                    $attributes['starts_on'] = $data['starts_on'] ?? $operation->starts_on ?? $periodRows->min('starts_on');
+                    $attributes['expires_on'] = $data['expires_on'] ?? $operation->expires_on ?? $periodRows->max('expires_on');
+                } else {
+                    $attributes['starts_on'] = $periodRows->min('starts_on') ?? $operation->starts_on;
+                    $attributes['expires_on'] = $periodRows->contains('expires_on', null) ? null : $periodRows->max('expires_on');
+                }
                 foreach ($periodRows as $index => $row) {
                     $computer = $computers[$row['computer_id']];
                     $old = $existing->get($computer->id);

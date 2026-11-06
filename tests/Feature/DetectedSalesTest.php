@@ -55,7 +55,9 @@ class DetectedSalesTest extends TestCase
         $version = $a->fresh()->commercial_version;
         $this->assertSame(0, $company->initializeDetectedSales());
         $this->assertSame($version, $a->fresh()->commercial_version);
-        $this->view('filament.computer-cycles', ['computer' => $a->fresh()])->assertSee('Prima vendita')->assertSee('Da completare');
+        $this->view('filament.computer-cycles', ['computer' => $a->fresh()])->assertSee('V2 · Seconda vendita')->assertSee('Rilevata da GravityZone')->assertDontSee('Prima vendita')->assertSee('Da completare');
+        Livewire::test(CompanyRenewals::class, ['companyId' => $company->id])->assertSeeInOrder(
+            ['Terza vendita · rilevata 03/2026', 'Seconda vendita · rilevata 02/2026', 'Prima vendita · rilevata 02/2025']);
         Livewire::test(Licenze::class)->set('data.company_id', $company->id)->filterTable('status', 'missing')->assertCanSeeTableRecords([$a, $b, $c, $d]);
         Livewire::test(Dashboard::class)->assertOk();
         Http::assertNothingSent();

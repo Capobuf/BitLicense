@@ -23,7 +23,7 @@ class CompanyRenewalsAction extends Action
         $this->label('Vendite e rinnovi')->icon(Heroicon::OutlinedClock)->model(Company::class)
             ->authorize(fn (?Company $record): bool => $record !== null && Gate::allows('update', $record))
             ->modalHeading(fn (?Company $record): string => ($record ? $record->name.' · ' : '').'Vendite e rinnovi')
-            ->modalDescription('Vendite, rinnovi e aggiornamenti, con periodi e storico per computer.')
+            ->modalDescription('Licenze aziendali, computer associati e storico delle operazioni.')
             ->modalWidth('7xl')->modalSubmitAction(false)->modalCancelActionLabel('Chiudi')
             ->schema(fn (?Company $record): array => $record === null ? [] : [
                 Livewire::make(CompanyRenewals::class, ['companyId' => $record->id])->key('company-renewals-'.$record->id),

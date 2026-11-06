@@ -1,66 +1,83 @@
 @php
     $current = $computer->effectivePeriod();
     $next = $computer->nextPeriod();
+    $sale = $computer->periods->sortBy('starts_on')->first(fn ($period) => $period->operation->kind === 'initial')?->operation;
     $upgrades = $computer->company->renewals->where('kind', 'upgrade')->filter(fn ($operation) => collect($operation->affected_periods)->contains(fn ($affected) => $computer->periods->contains('id', $affected['period_id'])))->sortByDesc('occurred_on');
-    $renewals = $computer->periods->filter(fn ($period) => $period->operation->kind === 'renewal')->count();
+    $renewals = $computer->renewalCount();
+    $interactive = $interactive ?? false;
 @endphp
 <div class="bl-commercial-detail">
     @if ($current)
-        @if ($current->operation->detection_month)
-            <p class="bl-commercial-note">Prima vendita riconosciuta dal rilevamento GravityZone. Il raggruppamento iniziale è per azienda e mese; puoi correggerlo da «Vendite e rinnovi».</p>
-        @endif
         <dl class="bl-commercial-summary">
-            <div><dt>Origine del periodo</dt><dd>{{ $current->operation->reference }} · {{ \App\Models\CompanyRenewal::KINDS[$current->operation->kind] }}</dd></div>
-            <div><dt>Rinnovi registrati</dt><dd>{{ $renewals }}</dd></div>
-            <div><dt>Licenza assegnata</dt><dd>{{ $computer->company_product ?: 'Non disponibile' }}</dd></div>
-            <div><dt>Validità</dt><dd>{{ $current->starts_on->format('d/m/Y') }} → {{ $current->expires_on?->format('d/m/Y') ?? 'Da completare' }}</dd></div>
+            <div><dt>Vendita di appartenenza</dt><dd>{{ $sale ? $sale->reference.' · '.$sale->label : 'Non collegata' }}@if ($sale?->occurred_on) · {{ $sale->occurred_on->format('d/m/Y') }}@endif</dd></div>
+            <div><dt>Periodo attuale · {{ $current->operation->reference }}</dt><dd>{{ $current->starts_on->format('d/m/Y') }} → {{ $current->expires_on?->format('d/m/Y') ?? 'Da completare' }}</dd></div>
+            @if ($next && $next->id !== $current->id)
+                <div><dt>Prossimo periodo · {{ $next->operation->reference }}</dt><dd>{{ $next->starts_on->format('d/m/Y') }} → {{ $next->expires_on?->format('d/m/Y') ?? 'Da completare' }}</dd></div>
+            @endif
         </dl>
-        @if ($next && $next->id !== $current->id)
-            <p class="bl-commercial-note">Rinnovo già registrato: {{ $next->operation->reference }}, dal {{ $next->starts_on->format('d/m/Y') }} al {{ $next->expires_on?->format('d/m/Y') ?? 'Da completare' }}. Data di rinnovo: {{ $next->operation->occurred_on->format('d/m/Y') }}.</p>
-        @else
-            <p class="bl-commercial-note">Prossima scadenza da rinnovare: {{ $current->expires_on?->format('d/m/Y') ?? 'Da completare' }}. Nessun periodo successivo registrato.</p>
-        @endif
-        <p class="bl-commercial-note">Date e riferimenti provengono dall’operazione. Usa «Vendite e rinnovi» per registrare un nuovo periodo o correggere quello esistente.</p>
-        <ol class="bl-cycle-list">
-            @foreach ($computer->periods->sortByDesc('starts_on') as $period)
-                <li>
-                    <div><strong>{{ $period->operation->reference }} · {{ \App\Models\CompanyRenewal::KINDS[$period->operation->kind] }}</strong>
-                        <p class="bl-commercial-note">Licenza registrata: {{ $period->product ?: 'Non disponibile' }}</p>
-                        @if ($period->operation->invoice_reference)
-                            <p class="bl-commercial-note">Rif. fattura: {{ $period->operation->invoice_reference }}</p>
-                        @endif
-                    </div>
-                    <span>{{ $period->starts_on->format('d/m/Y') }} → {{ $period->expires_on?->format('d/m/Y') ?? 'Da completare' }}</span>
-                </li>
-            @endforeach
-        </ol>
-        @if ($upgrades->isNotEmpty())
-            <h3 class="bl-commercial-title">Aggiornamenti aziendali</h3>
-            <ul class="bl-cycle-list">
-                @foreach ($upgrades as $upgrade)
-                    @php($affected = collect($upgrade->affected_periods)->first(fn ($row) => $computer->periods->contains('id', $row['period_id'])))
-                    <li><div><strong>{{ $upgrade->reference }} · {{ ($affected['product'] ?? $upgrade->product) ?: 'Licenza non disponibile' }}</strong>
-                        <p class="bl-commercial-note">Da {{ $affected['previous_product'] ?: 'licenza non disponibile' }}</p></div>
-                        <span>Dal {{ $upgrade->occurred_on->format('d/m/Y') }} · scadenza invariata</span>
-                    </li>
-                @endforeach
-            </ul>
-        @endif
+    @elseif ($computer->hasTransferredLicense())
+        <p>Licenza trasferita al computer sostitutivo.</p>
     @else
-        @if ($computer->hasTransferredLicense())
-            <p>Licenza trasferita al computer sostitutivo.</p>
-            <p class="bl-commercial-note">La validità corrente appartiene al sostituto. Lo storico del computer conserva i passaggi effettuati.</p>
-        @else
-            <p>Da associare a una vendita o a un rinnovo.</p>
-            <p class="bl-commercial-note">Le date già presenti sono conservate. Per i computer GravityZone, il primo rilevamento identifica la prima vendita, raggruppata per azienda e mese.</p>
+        <p>Da associare a una vendita o a un rinnovo.</p>
+    @endif
+
+    @if ($interactive)
+        <div class="fi-ac fi-wrapped">
+            @if ($sale)
+                <x-filament::button color="gray" icon="heroicon-o-pencil-square" wire:click="mountAction('edit', {}, { table: true, recordKey: '{{ $sale->id }}' })">Modifica vendita {{ $sale->reference }}</x-filament::button>
+                <x-filament::button color="gray" icon="heroicon-o-arrows-right-left" wire:click="mountAction('moveComputers', {}, { table: true, recordKey: '{{ $sale->id }}' })">Cambia vendita</x-filament::button>
+            @endif
+            @if ($current && $current->operation->id !== $sale?->id)
+                <x-filament::button color="gray" icon="heroicon-o-pencil-square" wire:click="mountAction('edit', {}, { table: true, recordKey: '{{ $current->operation->id }}' })">Modifica {{ $current->operation->reference }}</x-filament::button>
+            @endif
+            <x-filament::button icon="heroicon-o-link" :disabled="$computer->periods->contains('expires_on', null)" wire:click="mountAction('associateRenewal', {}, { table: true })">Associa a rinnovo</x-filament::button>
+            <x-filament::button color="gray" icon="heroicon-o-plus" wire:click="mountAction('newSale', {}, { table: true })">{{ $current ? 'Nuova vendita aziendale' : 'Nuova vendita' }}</x-filament::button>
+        </div>
+        @if ($current && $computer->periods->contains('expires_on', null))
+            <p class="bl-commercial-note">Completa la scadenza del periodo prima di rinnovare.</p>
         @endif
     @endif
-    @if ($computer->periods->isEmpty() && $computer->originPeriods->isNotEmpty())
-        <h3 class="bl-commercial-title">Periodi trasferiti al sostitutivo</h3>
-        <ul class="bl-cycle-list">
-            @foreach ($computer->originPeriods as $period)
-                <li><strong>{{ $period->operation->reference }}</strong><span>{{ $period->starts_on->format('d/m/Y') }} → {{ $period->expires_on?->format('d/m/Y') ?? 'Da completare' }} · trasferito al computer #{{ $period->computer_id }}</span></li>
-            @endforeach
-        </ul>
+
+    @if ($computer->periods->isNotEmpty() || $computer->originPeriods->isNotEmpty())
+        <details>
+            <summary class="bl-commercial-title">Storico · {{ $renewals }} {{ $renewals === 1 ? 'rinnovo' : 'rinnovi' }}</summary>
+            <ol class="bl-cycle-list">
+                @foreach ($computer->periods->sortByDesc('starts_on') as $period)
+                    <li>
+                        <div><strong>{{ $period->operation->reference }} · {{ $period->operation->label }}</strong>
+                            @if ($period->operation->detection_month)<p class="bl-commercial-note">Rilevata da GravityZone</p>@endif
+                            @if ($period->product)<p class="bl-commercial-note">{{ $period->product }}</p>@endif
+                            @if ($period->operation->invoice_reference)<p class="bl-commercial-note">Rif. fattura: {{ $period->operation->invoice_reference }}</p>@endif
+                            @if ($interactive)
+                                <x-filament::link tag="button" type="button" wire:click="mountAction('edit', {}, { table: true, recordKey: '{{ $period->operation->id }}' })">Modifica {{ $period->operation->reference }}</x-filament::link>
+                            @endif
+                        </div>
+                        <span>{{ $period->starts_on->format('d/m/Y') }} → {{ $period->expires_on?->format('d/m/Y') ?? 'Da completare' }}</span>
+                    </li>
+                @endforeach
+            </ol>
+            @if ($upgrades->isNotEmpty())
+                <h3 class="bl-commercial-title">Aggiornamenti aziendali</h3>
+                <ul class="bl-cycle-list">
+                    @foreach ($upgrades as $upgrade)
+                        @php($affected = collect($upgrade->affected_periods)->first(fn ($row) => $computer->periods->contains('id', $row['period_id'])))
+                        <li><div><strong>{{ $upgrade->reference }} · {{ ($affected['product'] ?? $upgrade->product) ?: 'Licenza non disponibile' }}</strong>
+                            <p class="bl-commercial-note">Da {{ $affected['previous_product'] ?: 'licenza non disponibile' }}</p></div>
+                            <span>Dal {{ $upgrade->occurred_on->format('d/m/Y') }}</span>
+                        </li>
+                    @endforeach
+                </ul>
+            @endif
+            @if ($computer->periods->isEmpty() && $computer->originPeriods->isNotEmpty())
+                <ul class="bl-cycle-list">
+                    @foreach ($computer->originPeriods as $period)
+                        <li><strong>{{ $period->operation->reference }}</strong><span>{{ $period->starts_on->format('d/m/Y') }} → {{ $period->expires_on?->format('d/m/Y') ?? 'Da completare' }} · trasferito al computer #{{ $period->computer_id }}</span></li>
+                    @endforeach
+                </ul>
+            @endif
+        </details>
+    @endif
+    @if ($interactive)
+        <x-filament-actions::modals />
     @endif
 </div>
