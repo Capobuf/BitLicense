@@ -130,3 +130,7 @@ Issue #26 explicitly authorizes discarding the local development database withou
 ## Production release is blocked
 
 Do not deploy to CloudPanel, cPanel or any production server. Do not configure production domains, run migrations on real customer databases, or publish the application on an external server. Do not prepare unnecessarily complex release procedures. Deliver a complete application verifiable in development; distribution is a separate decision after customer acceptance and requires new explicit authorization.
+
+### Customer-approved CloudPanel deployment (06/11/2026)
+
+The customer explicitly requested CI/CD to their CloudPanel site bitlicense.bydot.it. `.github/workflows/deploy.yml` runs the tests and then deploys every push to main (or a manual run) over SSH with rsync, migrations and caches. Secrets live only in the GitHub `production` environment, restricted to main; the server owns `.env` and `storage/`. Merging into main is therefore a production release: the push and merge approval gates above still apply. Never deploy manually from an agent session or touch production data outside that workflow.

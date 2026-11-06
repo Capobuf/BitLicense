@@ -9,7 +9,7 @@ Computer** e una sola vista operativa **Licenze**. Le #26 e #17 sono integrate;
 la #30 aggiunge la **Dashboard** separata richiesta dal committente, in Blade.
 La #10, nel perimetro approvato il 04/11/2026, collega vendite, rinnovi e upgrade
 ai periodi dei computer. Le #11–#15 restano sospese.
-La #16 resta chiusa; nessun rilascio in produzione è previsto.
+La #16 resta chiusa; il deploy su CloudPanel è descritto in fondo.
 
 ## Ambiente di sviluppo
 
@@ -333,5 +333,20 @@ del database destinato all'applicazione.
 Esiti, anteprime e limiti della verifica #17 sono riepilogati in
 [docs/development-check.md](docs/development-check.md).
 
-Lo sviluppo segue `AGENTS.md` e le issue GitHub. La distribuzione in produzione
-è esclusa da questa fase.
+Lo sviluppo segue `AGENTS.md` e le issue GitHub.
+
+## Deploy su CloudPanel
+
+Ogni push su `main` (o un avvio manuale da *Actions → Deploy*) esegue i test
+e, se passano, pubblica su `bitlicense.bydot.it` tramite
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml): manutenzione,
+`rsync`, `migrate --force`, `optimize`, ripristino del sito.
+
+- Segreti nell'environment GitHub `production`, limitato a `main`:
+  `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PATH`, `DEPLOY_SSH_KEY` (chiave
+  dedicata, la pubblica è in `~/.ssh/authorized_keys` dell'utente del sito),
+  `DEPLOY_KNOWN_HOSTS`.
+- Sul server restano propri e non vengono sovrascritti `.env` e `storage/`.
+- La document root del sito CloudPanel deve essere `…/bitlicense.bydot.it/public`.
+- Il Cron del sito esegue ogni minuto
+  `php /home/bydot-bitlicense/htdocs/bitlicense.bydot.it/artisan schedule:run`.
