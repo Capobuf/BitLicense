@@ -1,11 +1,17 @@
 <div class="bl-commercial-detail">
     @if ($operation->detection_month)
-        <p class="bl-commercial-note">Prima vendita riconosciuta dai primi rilevamenti GravityZone: {{ substr($operation->detection_month, 5) }}/{{ substr($operation->detection_month, 0, 4) }}. Raggruppamento modificabile con «Sposta PC»; ogni computer conserva le proprie date.</p>
+        <p class="bl-commercial-note">Vendita riconosciuta dai primi rilevamenti GravityZone: {{ substr($operation->detection_month, 5) }}/{{ substr($operation->detection_month, 0, 4) }}. Raggruppamento modificabile con «Sposta PC»; ogni computer conserva le proprie date.</p>
     @endif
     @if ($operation->is_regrouped)
         <p class="bl-commercial-note">Questo raggruppamento non contiene più computer. I riferimenti e lo storico restano conservati.</p>
     @endif
     <dl class="bl-commercial-summary">
+        @if ($operation->kind === 'renewal')
+            <div><dt>Licenze rinnovate</dt><dd>{{ $operation->quantity }}</dd></div>
+            <div><dt>Computer associati</dt><dd>{{ $operation->periods->count() }}</dd></div>
+            <div><dt>Licenze disponibili</dt><dd>{{ max(0, $operation->quantity - $operation->periods->count()) }}</dd></div>
+            <div><dt>Validità del rinnovo</dt><dd>{{ $operation->starts_on?->format('d/m/Y') }} → {{ $operation->expires_on?->format('d/m/Y') ?? 'Da completare' }}</dd></div>
+        @endif
         <div><dt>Data operazione</dt><dd>{{ $operation->occurred_on?->format('d/m/Y') ?? 'Non registrata' }}</dd></div>
         <div><dt>{{ $operation->kind === 'upgrade' ? 'Differenza complessiva' : 'Totale operazione' }}</dt><dd>{{ $operation->price_cents === null ? 'Non indicato' : '€ '.str_replace('.', ',', \App\Support\Euro::fromCents($operation->price_cents)) }}</dd></div>
         <div><dt>Riferimento fattura</dt><dd>{{ $operation->invoice_reference ?: 'Non indicato' }}</dd></div>
@@ -41,10 +47,17 @@
         @if ($operation->quantity > $operation->periods->count())
             <p class="bl-commercial-note">{{ $operation->quantity - $operation->periods->count() }} licenze non collegate a un computer. Lo storico mostra solo i collegamenti registrati.</p>
         @endif
+    @elseif ($operation->kind === 'renewal' && $operation->occurred_on !== null)
+        <p class="bl-commercial-note">Nessun computer associato. Puoi aggiungerli da «Gestisci rinnovo e computer» o dalla scheda del singolo PC.</p>
     @else
         <p class="bl-commercial-note">Registro aziendale senza collegamenti ai computer: {{ $operation->starts_on?->format('d/m/Y') }} → {{ $operation->expires_on?->format('d/m/Y') }}, {{ $operation->quantity }} licenze. I computer coinvolti non sono ricostruiti automaticamente.</p>
     @endif
-    @foreach (collect($operation->history)->where('event', 'regrouped') as $change)
-        <p class="bl-commercial-note">{{ \Carbon\CarbonImmutable::parse($change['recorded_at'])->timezone('Europe/Rome')->format('d/m/Y H:i') }} · {{ count($change['periods']) }} PC spostati da V{{ $change['source_id'] }} a V{{ $change['target_id'] }}. Date individuali conservate.</p>
+    @php
+        $moves = collect($operation->history)->where('event', 'regrouped');
+        $sales = $moves->isEmpty() ? collect() : \App\Models\CompanyRenewal::where('company_id', $operation->company_id)
+            ->whereKey($moves->pluck('source_id')->merge($moves->pluck('target_id'))->unique())->get()->keyBy('id');
+    @endphp
+    @foreach ($moves as $change)
+        <p class="bl-commercial-note">{{ \Carbon\CarbonImmutable::parse($change['recorded_at'])->timezone('Europe/Rome')->format('d/m/Y H:i') }} · {{ count($change['periods']) }} PC spostati da {{ $sales[$change['source_id']]?->reference ?? '?' }} a {{ $sales[$change['target_id']]?->reference ?? '?' }}. Date individuali conservate.</p>
     @endforeach
 </div>

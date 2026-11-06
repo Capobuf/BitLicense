@@ -23,7 +23,6 @@ use Filament\Forms\Components\TextInput;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Notifications\Notification;
 use Filament\Pages\Dashboard;
-use Filament\Schemas\Components\Actions;
 use Filament\Schemas\Components\EmbeddedTable;
 use Filament\Schemas\Components\Flex;
 use Filament\Schemas\Components\Group;
@@ -80,6 +79,9 @@ class Licenze extends Dashboard implements HasTable
 
     #[Locked]
     public array $expectedVersions = [];
+
+    #[Locked]
+    public array $expectedComputerDetails = [];
 
     #[Locked]
     public ?int $creatingCompanyId = null;
@@ -264,7 +266,7 @@ class Licenze extends Dashboard implements HasTable
                             return $record->hasTransferredLicense() ? 'Consulta lo storico del passaggio' : 'Vendita non collegata';
                         }
 
-                        return CompanyRenewal::KINDS[$period->operation->kind]
+                        return $period->operation->label
                             .($record->nextPeriod() !== null ? ' · Periodo futuro registrato' : '');
                     }),
                 TextColumn::make('notes')->label('Note')->wrap()->limit(80)->tooltip(fn (Computer $record): ?string => $record->notes)
@@ -351,8 +353,9 @@ class Licenze extends Dashboard implements HasTable
             ]),
             Section::make('Ciclo commerciale')->icon(Heroicon::OutlinedClock)->visible(fn (?Computer $record): bool => $record !== null)
                 ->schema([
-                    View::make('filament.computer-cycles')->viewData(fn (Computer $record): array => ['computer' => $record->loadMissing(['periods.operation', 'company.renewals'])]),
-                    Actions::make([$this->commercialAction('cyclesFromModal')]),
+                    Livewire::make(CompanyRenewals::class, fn (?Computer $record): array => $record === null ? [] : [
+                        'companyId' => $record->company_id, 'computerId' => $record->id, 'computerContext' => true,
+                    ])->key(fn (?Computer $record): string => 'computer-commercial-'.($record?->id ?? 'new')),
                 ]),
             Section::make('Licenza Commerciale')->icon(Heroicon::OutlinedKey)->visible(fn (?Computer $record): bool => $record === null || $record->effectivePeriod() === null)->columns(2)->schema([
                 DatePicker::make('activated_on')->label('Attivazione')->placeholder('es. 01/01/2026')->native(false)->displayFormat('d/m/Y')->nullable()->live()
@@ -384,6 +387,7 @@ class Licenze extends Dashboard implements HasTable
             ->modalSubmitActionLabel('Salva')->schema($this->computerSections())
             ->fillForm(function (Computer $record): array {
                 $this->expectedVersions = [$record->id => $record->commercial_version];
+                $this->expectedComputerDetails = [$record->id => $record->only(['name', 'notes'])];
 
                 return $record->only(['name', 'invoice_reference', 'quote_reference', 'notes']) + [
                     'activated_on' => $record->activated_on?->toDateString(), 'expires_on' => $record->expires_on?->toDateString(),
@@ -491,9 +495,9 @@ class Licenze extends Dashboard implements HasTable
             });
     }
 
-    private function commercialAction(string $name = 'cycles'): Action
+    private function commercialAction(): Action
     {
-        return Action::make($name)->label('Vendite e rinnovi')->icon(Heroicon::OutlinedClock)->authorize('update')
+        return Action::make('cycles')->label('Vendite e rinnovi')->icon(Heroicon::OutlinedClock)->authorize('update')
             ->modalHeading(fn (Computer $record): string => $record->company->name.' · Vendite e rinnovi')
             ->modalWidth('7xl')->modalSubmitAction(false)->modalCancelActionLabel('Chiudi')
             ->schema(fn (Computer $record): array => [
@@ -504,6 +508,13 @@ class Licenze extends Dashboard implements HasTable
     #[On('company-renewals-updated')]
     public function refreshCommercialPeriods(): void
     {
+        // Rebase only independent PC details, preserving drafts and rejecting concurrent edits to them.
+        foreach ($this->expectedComputerDetails as $id => $details) {
+            $computer = Computer::where('company_id', $this->selectedCompanyId())->find($id);
+            if ($computer !== null && $computer->periods()->exists() && $computer->only(['name', 'notes']) === $details) {
+                $this->expectedVersions[$id] = $computer->commercial_version;
+            }
+        }
         $this->flushCachedTableRecords();
         unset($this->referenceColumns);
     }

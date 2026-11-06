@@ -208,6 +208,170 @@ class CompanyRenewalsUiTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_common_dates_validate_before_updating_rows_and_allow_individual_changes(): void
+    {
+        $company = $this->company();
+        $a = Computer::create(['company_id' => $company->id, 'name' => 'PC A']);
+        $b = Computer::create(['company_id' => $company->id, 'name' => 'PC B']);
+        $page = Livewire::test(CompanyRenewals::class, ['companyId' => $company->id])
+            ->mountAction(TestAction::make('create')->table())
+            ->set('mountedActions.0.data.computer_ids', [$a->id, $b->id]);
+        $before = $page->get('mountedActions.0.data.periods');
+        $page->mountAction(TestAction::make('applyDates')->schemaComponent('periods', 'mountedActionSchema0'))
+            ->setActionData(['starts_on' => '2026-11-04', 'expires_on' => '2026-11-03'])
+            ->callMountedAction()->assertHasActionErrors(['expires_on']);
+        $this->assertSame($before, $page->get('mountedActions.0.data.periods'));
+        $page->setActionData(['starts_on' => '2026-11-04', 'expires_on' => '2027-11-03'])
+            ->callMountedAction()->assertHasNoActionErrors();
+        $rows = $page->get('mountedActions.0.data.periods');
+        $this->assertSame([$a->id, $b->id], array_column($rows, 'computer_id'));
+        $this->assertSame(['2026-11-04', '2026-11-04'], array_column($rows, 'starts_on'));
+        $this->assertSame(['2027-11-03', '2027-11-03'], array_column($rows, 'expires_on'));
+        $this->assertDatabaseCount('company_renewals', 0);
+        $rows[array_key_last($rows)]['expires_on'] = '2027-12-31';
+        $page->setActionData(['periods' => $rows])->callMountedAction()->assertHasNoActionErrors();
+        $this->assertSame('2027-11-03', $a->fresh()->expires_on->toDateString());
+        $this->assertSame('2027-12-31', $b->fresh()->expires_on->toDateString());
+        Http::assertNothingSent();
+    }
+
+    public function test_switching_to_renewal_refreshes_suggestions_and_preserves_custom_dates(): void
+    {
+        $company = $this->company();
+        $pc = Computer::create(['company_id' => $company->id, 'name' => 'PC A']);
+        $company->saveCommercialOperation($this->operation($pc), expectedComputerVersions: [$pc->id => 0]);
+        $page = Livewire::test(CompanyRenewals::class, ['companyId' => $company->id])
+            ->mountAction(TestAction::make('create')->table())
+            ->set('mountedActions.0.data.computer_ids', [$pc->id])
+            ->set('mountedActions.0.data.kind', 'renewal');
+        $rows = $page->get('mountedActions.0.data.periods');
+        $this->assertSame('2027-01-01', reset($rows)['starts_on']);
+        $this->assertNull(reset($rows)['expires_on']);
+        $rows[array_key_first($rows)]['starts_on'] = '2027-02-01';
+        $rows[array_key_first($rows)]['expires_on'] = '2028-01-31';
+        $page->setActionData(['periods' => $rows])
+            ->set('mountedActions.0.data.kind', 'initial')
+            ->set('mountedActions.0.data.kind', 'renewal');
+        $this->assertSame($rows, $page->get('mountedActions.0.data.periods'));
+        $page->callMountedAction()->assertHasNoActionErrors();
+        $this->assertSame('2027-02-01', $company->renewals()->where('kind', 'renewal')->sole()->periods->sole()->starts_on->toDateString());
+        Http::assertNothingSent();
+    }
+
+    public function test_computer_actions_preselect_the_pc_and_keep_sales_and_renewals_distinct(): void
+    {
+        $company = $this->company();
+        $a = Computer::create(['company_id' => $company->id, 'name' => 'PC A']);
+        $b = Computer::create(['company_id' => $company->id, 'name' => 'PC B']);
+        $sale = $company->saveCommercialOperation($this->operation($a), expectedComputerVersions: [$a->id => 0, $b->id => 0]);
+        $page = Livewire::test(CompanyRenewals::class, ['companyId' => $company->id, 'computerId' => $a->id, 'computerContext' => true])
+            ->assertSee('Modifica vendita V1')->assertSee('Cambia vendita')->assertSee('Associa a rinnovo');
+        $page->mountAction(TestAction::make('edit')->table($sale))->assertActionDataSet(['computer_ids' => [$a->id]])->unmountAction();
+        $page->mountAction(TestAction::make('moveComputers')->table($sale))->assertActionDataSet(['computer_ids' => [$a->id]])->unmountAction();
+        $renewal = $company->saveCommercialOperation(['kind' => 'renewal', 'occurred_on' => '2026-11-04', 'quantity' => 8,
+            'starts_on' => '2027-01-01', 'expires_on' => '2027-12-31', 'periods' => []]);
+        $page->mountAction(TestAction::make('associateRenewal')->table())
+            ->set('mountedActions.0.data.renewal_id', $renewal->id)
+            ->assertActionDataSet(['starts_on' => '2027-01-01', 'expires_on' => '2027-12-31'])
+            ->callMountedAction()->assertHasNoActionErrors()->assertSee('Prossimo periodo');
+        $this->assertSame(8, $renewal->fresh()->quantity);
+        $this->assertSame($sale->periods->sole()->id, $renewal->fresh()->periods->sole()->previous_period_id);
+        $this->assertSame('2026-12-31', $a->fresh()->expires_on->toDateString());
+        $page->mountAction(TestAction::make('newSale')->table())->assertActionDataSet(['kind' => 'initial', 'computer_ids' => []])->unmountAction();
+        Livewire::test(CompanyRenewals::class, ['companyId' => $company->id, 'computerId' => $b->id, 'computerContext' => true])
+            ->mountAction(TestAction::make('newSale')->table())->assertActionDataSet(['kind' => 'initial', 'computer_ids' => [$b->id]])
+            ->setActionData($this->operation($b))->callMountedAction()->assertHasNoActionErrors()->assertSee('Modifica vendita V2');
+        Http::assertNothingSent();
+    }
+
+    public function test_computer_notes_can_be_saved_after_correcting_a_sale_but_concurrent_notes_are_protected(): void
+    {
+        $company = $this->company();
+        $pc = Computer::create(['company_id' => $company->id, 'name' => 'PC A']);
+        $sale = $company->saveCommercialOperation($this->operation($pc), expectedComputerVersions: [$pc->id => 0]);
+        $page = Livewire::test(Licenze::class)->set('data.company_id', $company->id)
+            ->mountAction(TestAction::make('edit')->table($pc))->assertSeeLivewire(CompanyRenewals::class)
+            ->setActionData(['notes' => 'Bozza conservata']);
+        $company->saveCommercialOperation(array_replace($this->operation($pc), ['amount' => '45']), $sale->id, 0, [$pc->id => 1]);
+        $page->dispatch('company-renewals-updated')->callMountedAction()->assertHasNoActionErrors();
+        $this->assertSame('Bozza conservata', $pc->fresh()->notes);
+
+        $page->mountAction(TestAction::make('edit')->table($pc))->setActionData(['notes' => 'Bozza successiva']);
+        $pc->refresh()->updateCommercial(['notes' => 'Modifica di un altro operatore'], $pc->commercial_version);
+        $page->dispatch('company-renewals-updated')->callMountedAction()->assertHasActionErrors();
+        $this->assertSame('Modifica di un altro operatore', $pc->fresh()->notes);
+        Http::assertNothingSent();
+    }
+
+    public function test_unlinked_computer_keeps_note_draft_after_its_first_sale_is_registered(): void
+    {
+        $company = $this->company();
+        $pc = Computer::create(['company_id' => $company->id, 'name' => 'PC A']);
+        $page = Livewire::test(Licenze::class)->set('data.company_id', $company->id)
+            ->mountAction(TestAction::make('edit')->table($pc))->setActionData(['notes' => 'Nota in bozza']);
+        $company->saveCommercialOperation($this->operation($pc), expectedComputerVersions: [$pc->id => 0]);
+        $page->dispatch('company-renewals-updated')->callMountedAction()->assertHasNoActionErrors();
+        $this->assertSame('Nota in bozza', $pc->fresh()->notes);
+        $this->assertSame('2026-12-31', $pc->fresh()->expires_on->toDateString());
+    }
+
+    public function test_company_can_register_empty_renewal_and_pc_selection_never_increases_quantity(): void
+    {
+        $company = $this->company();
+        $pcs = collect(range(1, 3))->map(fn ($number) => Computer::create(['company_id' => $company->id, 'name' => 'PC '.$number]));
+        $page = Livewire::test(CompanyRenewals::class, ['companyId' => $company->id]);
+        $page->mountAction(TestAction::make('create')->table())
+            ->set('mountedActions.0.data.kind', 'renewal')
+            ->setActionData(['quantity' => 2, 'starts_on' => '2027-01-01', 'expires_on' => '2027-12-31'])
+            ->callMountedAction()->assertHasNoActionErrors();
+        $renewal = $company->renewals()->sole();
+        $this->assertCount(0, $renewal->periods);
+        $this->assertSame('2027-12-31', $renewal->expires_on->toDateString());
+        $this->view('filament.commercial-operation', ['operation' => $renewal])->assertSee('Licenze disponibili')->assertSee('Nessun computer associato');
+
+        $page->mountAction(TestAction::make('edit')->table($renewal))
+            ->set('mountedActions.0.data.computer_ids', $pcs->pluck('id')->all())
+            ->assertActionDataSet(['quantity' => 2])->callMountedAction()->assertHasActionErrors(['quantity']);
+        $this->assertCount(0, $renewal->fresh()->periods);
+        $page->set('mountedActions.0.data.computer_ids', $pcs->take(2)->pluck('id')->all())
+            ->callMountedAction()->assertHasNoActionErrors();
+        $this->assertCount(2, $renewal->fresh()->periods);
+        $this->assertSame('2027-01-01', $renewal->fresh()->periods->first()->starts_on->toDateString());
+        $this->assertSame(2, $renewal->fresh()->quantity);
+        $this->assertNull($pcs->last()->fresh()->expires_on);
+        Http::assertNothingSent();
+    }
+
+    public function test_association_rejects_stale_full_foreign_and_duplicate_renewals(): void
+    {
+        $company = $this->company();
+        $a = Computer::create(['company_id' => $company->id, 'name' => 'PC A']);
+        $b = Computer::create(['company_id' => $company->id, 'name' => 'PC B']);
+        $data = ['kind' => 'renewal', 'occurred_on' => '2026-11-04', 'quantity' => 1, 'starts_on' => '2027-01-01', 'expires_on' => '2027-12-31', 'periods' => []];
+        $renewal = $company->saveCommercialOperation($data);
+        $foreign = $this->company()->saveCommercialOperation($data);
+        $page = Livewire::test(CompanyRenewals::class, ['companyId' => $company->id, 'computerId' => $a->id, 'computerContext' => true])
+            ->assertSee('Associa a rinnovo')->mountAction(TestAction::make('associateRenewal')->table())
+            ->set('mountedActions.0.data.renewal_id', $renewal->id);
+        $company->saveCommercialOperation(array_replace($data, ['amount' => '80']), $renewal->id, 0);
+        $page->callMountedAction()->assertHasActionErrors()->unmountAction();
+        $this->assertCount(0, $renewal->fresh()->periods);
+        $page->mountAction(TestAction::make('associateRenewal')->table())
+            ->set('mountedActions.0.data.renewal_id', $foreign->id)->callMountedAction()->assertHasActionErrors(['renewal_id'])->unmountAction();
+        $page->mountAction(TestAction::make('associateRenewal')->table())
+            ->set('mountedActions.0.data.renewal_id', $renewal->id)->callMountedAction()->assertHasNoActionErrors();
+        $this->assertSame(1, $renewal->fresh()->quantity);
+        $this->assertSame(8000, $renewal->fresh()->price_cents);
+        foreach ([$a, $b] as $pc) {
+            Livewire::test(CompanyRenewals::class, ['companyId' => $company->id, 'computerId' => $pc->id, 'computerContext' => true])
+                ->mountAction(TestAction::make('associateRenewal')->table())
+                ->set('mountedActions.0.data.renewal_id', $renewal->id)->callMountedAction()->assertHasActionErrors(['renewal_id']);
+        }
+        $this->assertCount(1, $renewal->fresh()->periods);
+        $this->assertCount(0, $foreign->fresh()->periods);
+        Http::assertNothingSent();
+    }
+
     private function company(): Company
     {
         return Company::forceCreate(['name' => 'Azienda '.Company::count(), 'gravityzone_id' => 'company-'.Company::count(), 'last_seen_at' => now(), 'technical_product' => 'Base']);

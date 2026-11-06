@@ -55,7 +55,7 @@ class CommercialCyclesTest extends TestCase
         $this->assertSame(30000, $sale->price_cents);
         $this->assertSame('2026-12-31', $a->expires_on->toDateString());
         $this->assertSame('2026-12-31', $company->refresh()->technical_expires_on->toDateString());
-        $this->assertSame('R'.$renewal->id, $renewal->reference);
+        $this->assertSame(['R1', 'Primo rinnovo'], [$renewal->reference, $renewal->label]);
         Http::assertNothingSent();
     }
 
@@ -365,6 +365,52 @@ class CommercialCyclesTest extends TestCase
         $this->assertNull($upgrade->affected_periods[0]['previous_product']);
         $this->view('filament.commercial-operation', ['operation' => $upgrade])->assertSee('Non disponibile');
         Http::assertNothingSent();
+    }
+
+    public function test_company_renews_eight_licenses_and_later_associates_six_of_twelve_computers(): void
+    {
+        $company = $this->company();
+        $pcs = collect(range(1, 12))->map(fn ($number) => $this->computer($company, 'PC '.$number));
+        $sale = $this->save($company, $pcs->map(fn ($pc) => $this->row($pc))->all());
+        $before = $company->computers()->get()->toArray();
+        $data = $this->data([], ['kind' => 'renewal', 'quantity' => 8, 'starts_on' => '2027-01-01', 'expires_on' => '2027-12-31']);
+        $renewal = $company->saveCommercialOperation($data);
+        $this->assertSame(8, $renewal->quantity);
+        $this->assertCount(0, $renewal->periods);
+        $this->assertSame($before, $company->computers()->get()->toArray());
+
+        $data['periods'] = $pcs->take(6)->map(fn ($pc) => $this->row($pc, '2027-01-01', '2027-12-31'))->all();
+        $data['periods'][0]['expires_on'] = '2027-11-30';
+        $renewal = $company->saveCommercialOperation($data, $renewal->id, 0, $this->versions($company));
+        $this->assertSame(8, $renewal->quantity);
+        $this->assertCount(6, $renewal->periods);
+        $this->assertSame('2027-12-31', $renewal->expires_on->toDateString());
+        $this->assertSame('2027-11-30', $renewal->periods->first()->expires_on->toDateString());
+        foreach ($pcs as $index => $pc) {
+            $pc->refresh();
+            $this->assertSame($index < 6 ? 1 : 0, $pc->renewalCount());
+            $this->assertSame($sale->id, $pc->effectivePeriod()->company_renewal_id);
+            $this->assertSame($index < 6 ? $renewal->id : null, $pc->nextPeriod()?->company_renewal_id);
+        }
+        $data['periods'] = $pcs->take(9)->map(fn ($pc) => $this->row($pc, '2027-01-01', '2027-12-31'))->all();
+        $this->assertRejected(fn () => $company->saveCommercialOperation($data, $renewal->id, 1, $this->versions($company)));
+        $this->assertCount(6, $renewal->fresh()->periods);
+        $this->assertSame('2027-11-30', $renewal->fresh()->periods->first()->expires_on->toDateString());
+        Http::assertNothingSent();
+    }
+
+    public function test_company_renewal_without_computers_requires_valid_dates_and_positive_quantity(): void
+    {
+        $company = $this->company();
+        foreach ([
+            [], ['starts_on' => '2027-01-01'], ['expires_on' => '2027-12-31'],
+            ['starts_on' => '2027-02-29', 'expires_on' => '2027-12-31'],
+            ['starts_on' => '2027-01-01', 'expires_on' => '2026-12-31'],
+            ['starts_on' => '2027-01-01', 'expires_on' => '2027-12-31', 'quantity' => 0],
+        ] as $invalid) {
+            $this->assertRejected(fn () => $company->saveCommercialOperation($this->data([], array_replace(['kind' => 'renewal', 'quantity' => 8], $invalid))));
+            $this->assertDatabaseCount('company_renewals', 0);
+        }
     }
 
     private function company(): Company
