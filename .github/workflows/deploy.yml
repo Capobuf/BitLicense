@@ -51,6 +51,9 @@ jobs:
       # Also publishes the prebuilt Filament assets into public/.
       - run: composer install --no-dev --no-interaction --no-progress --prefer-dist --optimize-autoloader
 
+      # CloudPanel's nginx serves *.js only from disk, so Livewire's script route returns 404.
+      - run: php artisan vendor:publish --tag=livewire:assets --force
+
       - name: Configure SSH
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
