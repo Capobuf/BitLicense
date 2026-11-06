@@ -1,0 +1,86 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, intl, bcmath, pdo_sqlite, sodium, zip
+          coverage: none
+
+      - run: composer install --no-interaction --no-progress --prefer-dist
+
+      - run: cp .env.example .env && php artisan key:generate
+
+      - run: php artisan test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    # Secrets live in the "production" environment, restricted to main.
+    environment: production
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, intl, bcmath, sodium, zip
+          coverage: none
+
+      # Also publishes the prebuilt Filament assets into public/.
+      - run: composer install --no-dev --no-interaction --no-progress --prefer-dist --optimize-autoloader
+
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+
+      - name: Enter maintenance mode
+        run: |
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_PATH' && test -f .env && if [ -f artisan ]; then php artisan down --retry=15; fi"
+
+      # .env, storage/ and Let's Encrypt challenges are server-owned and survive --delete.
+      - name: Upload application
+        run: |
+          rsync -az --delete \
+            --exclude=/.git/ --exclude=/.github/ --exclude=/.claude/ --exclude=/.codex/ \
+            --exclude=/.env --exclude=/storage/ --exclude=/tests/ \
+            --exclude=/public/storage --exclude=/public/.well-known/ \
+            ./ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+
+      - name: Migrate and cache
+        run: |
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_PATH' && bash -s" <<'EOF'
+          set -euo pipefail
+          mkdir -p storage/app/private storage/app/public storage/framework/cache/data \
+            storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
+          php artisan migrate --force --no-interaction
+          php artisan optimize
+          php artisan up
+          EOF
