@@ -8,8 +8,11 @@ use Filament\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Gate;
+
+use function Illuminate\Support\defer;
 
 class SynchronizeGravityZoneAction extends Action
 {
@@ -40,11 +43,16 @@ class SynchronizeGravityZoneAction extends Action
 
                     if (Cache::has('gravityzone-sync-requested')) {
                         session()->put('gravityzone-sync-requested-at', now()->getTimestamp());
+                        // Runs after the response is sent; if it cannot start, the next Cron tick consumes the request.
+                        defer(function (): void {
+                            set_time_limit(0);
+                            Artisan::call('bitlicense:sync');
+                        });
                     }
 
                     Notification::make()->info()
-                        ->title($requested ? 'Aggiornamento richiesto' : 'Aggiornamento già richiesto o in corso')
-                        ->body('L’aggiornamento avviene in background. Attendi qualche minuto, poi ricarica la pagina per vedere i nuovi dati e l’esito.')
+                        ->title($requested ? 'Aggiornamento avviato' : 'Aggiornamento già richiesto o in corso')
+                        ->body('L’aggiornamento prosegue in background. Ricarica la pagina tra circa un minuto per vedere i nuovi dati e l’esito.')
                         ->send();
                 } catch (QueryException) {
                     Notification::make()->danger()->title('Richiesta non registrata')->body('Verifica la connessione al database e riprova.')->send();

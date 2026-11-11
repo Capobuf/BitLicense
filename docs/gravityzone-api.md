@@ -38,7 +38,7 @@ di dichiarare completa la scoperta. Le aziende non viste vengono segnate
 assenti soltanto dopo una sincronizzazione aziendale interamente riuscita.
 I due campi di ambito sono salvati da una migrazione additiva locale.
 
-La sincronizzazione legge lo stato dopo la licenza, con pausa di 250 ms.
+La sincronizzazione legge lo stato dopo la licenza.
 Se questa lettura fallisce, conserva la licenza appena acquisita e lo stato
 precedente, segnala l’aggiornamento incompleto e mostra quest’ultimo come
 **ultimo stato rilevato**. Come per gli altri errori di sincronizzazione, il
@@ -115,8 +115,10 @@ senza dichiarare una nuova lettura riuscita o spostare dati commerciali.
 Si conservano soltanto `id`, `name` e i dettagli disponibili
 `operatingSystemVersion`, `isManaged`, `isIsolated` e `firstSeen`. I campi mancanti sono
 sconosciuti; non si inventano stato online o prodotto commerciale.
-Non si acquisiscono IP, MAC o SID. Le richieste sono distanziate
-di 250 ms; eventuali 429 interrompono le successive, senza retry.
+Non si acquisiscono IP, MAC o SID. Ogni azienda legge le proprie pagine in ordine
+(cartelle AD, poi computer dell’azienda e di ogni cartella); fino a quattro aziende
+avanzano nello stesso round, al massimo un round al secondo. Un errore di pagina
+invalida solo l’azienda interessata; eventuali 429 interrompono le successive, senza retry.
 Fonte: [getNetworkInventoryItems](https://www.bitdefender.com/business/support/en/77211-128494-getnetworkinventoryitems.html).
 
 L’ID API è univoco; il nome è aggiornabile e non provoca associazioni locali.
@@ -209,13 +211,27 @@ Il riepilogo aziendale/globale segnala la sincronizzazione incompleta, anche
 se l’inventario è stato importato. Un’interruzione anomala lascia il messaggio
 di tentativo incompleto già presente sull’azienda.
 
-Ogni richiesta aggiuntiva è distanziata di 250 ms e riusa lock e cooldown
-condivisi. Non si effettuano chiamate al rendering. Nessuna nuova dipendenza
+Il metodo accetta un solo `endpointId`: per ogni azienda gli endpoint gestiti
+sono letti a gruppi di otto richieste parallele, con almeno un secondo fra
+l’inizio di due gruppi (otto al secondo sul limite predefinito di dieci).
+Un errore che interrompe la lettura (rete, HTTP, 429) non annulla le risposte
+già ricevute nel gruppo; i gruppi successivi non partono e i loro PC sono
+segnalati come non aggiornati. Lock e cooldown restano condivisi.
+Non si effettuano chiamate al rendering. Nessuna nuova dipendenza
 o servizio: resta disponibile il comando sincrono `bitlicense:sync-endpoints`.
-Il pannello richiede il ciclo completo in background tramite la cache condivisa;
-il Cron esegue `bitlicense:sync` alle 03:00 Europe/Rome oppure alla prima
-scansione al minuto dopo una richiesta manuale. Non dipende dal timeout
-della richiesta web. Apertura e navigazione non avviano sincronizzazioni.
+Il pannello registra la richiesta nella cache condivisa e avvia `bitlicense:sync`
+subito dopo l’invio della risposta (approvazione del committente dell’11/11/2026);
+il Cron esegue `bitlicense:sync` alle 03:00 Europe/Rome e consuma al minuto
+successivo una richiesta il cui avvio immediato non è riuscito.
+Apertura e navigazione non avviano sincronizzazioni.
+
+Misura reale dell'11/11/2026, autorizzata dal committente, sul database locale di
+sviluppo (22 aziende, 115 PC, 108 gestiti), `php artisan bitlicense:sync`:
+**99,8 s** contro circa 200 s del 04/11 (connessioni riusate, gruppi da cinque),
+poi **51,5 s** con i round paralleli: aziende 41 → 12 s, inventario 52 → 17 s,
+stato licenza dei PC 106 → 22 s. Nessun errore. La prima esecuzione ha creato il
+rilevamento delle prime vendite già previsto (29 vendite, 111 periodi); la seconda
+ha lasciato invariati tutti i dati locali.
 
 La fixture `endpoint-license.json` è una proiezione anonima dell’esempio
 ufficiale, non una risposta cliente; errori e varianti sono simulati nei test.
@@ -243,9 +259,15 @@ La mancata acquisizione dell’elenco non modifica le aziende esistenti.
 
 I limiti documentati sono per chiave API: cinque richieste al secondo per
 `getLicenseInfo` e `getNetworkInventoryItems`, dieci per `getCompaniesList`
-(limite predefinito). Le letture di licenze/inventario sono sequenziali e
-distanziate di almeno 250 ms, quindi al massimo quattro al secondo nel singolo
-import; il lock condiviso impedisce sincronizzazioni sovrapposte.
+(limite predefinito), anche per `getCompanyDetails` e `getManagedEndpointDetails`.
+Le letture partono a round paralleli, al massimo uno al secondo per metodo: quattro
+richieste per `getLicenseInfo` e `getNetworkInventoryItems`, otto per
+`getCompanyDetails` e `getManagedEndpointDetails`. Le aziende sono lette a giri:
+licenze, poi dettagli delle aziende note; i clienti dei partner condivisi formano
+il giro successivo. Gli elenchi `getCompaniesList` restano sequenziali, ad almeno
+250 ms l’uno dall’altro. Un round attende solo la parte del secondo non già trascorsa
+in attesa delle risposte. Un unico handler HTTP per sincronizzazione riusa le
+connessioni TLS. Il lock condiviso impedisce sincronizzazioni sovrapposte.
 Non vengono eseguiti retry automatici. HTTP 429 interrompe l’import e salva
 in cache il termine di attesa indicato da `Retry-After`, in secondi o data
 RFC 7231. Fino a quel momento tutte le letture, incluse verifica connessione

@@ -30,13 +30,24 @@ class BackgroundSynchronizationTest extends TestCase
         $this->actingAs(User::factory()->administrator()->create());
     }
 
+    public function test_a_request_starts_the_update_right_after_the_response(): void
+    {
+        $this->withoutDefer();
+        $this->mock(CompanySynchronizer::class)->shouldReceive('sync')->once()->globally()->ordered()->andReturn(1);
+        $this->mock(EndpointSynchronizer::class)->shouldReceive('sync')->once()->globally()->ordered()->andReturn(2);
+
+        Livewire::test(Licenze::class)->callAction('synchronize')->assertNotified('Aggiornamento avviato');
+        $this->assertFalse(Cache::has('gravityzone-sync-requested'));
+        $this->assertNotNull(session('gravityzone-sync-requested-at'));
+    }
+
     public function test_both_pages_queue_one_request_without_api_calls_or_exposing_credentials(): void
     {
         foreach ([Licenze::class, ManageCompanies::class] as $page) {
             Cache::forget('gravityzone-sync-requested');
             $component = Livewire::test($page)->assertDontSee('fake-test-key');
             $this->assertTrue($component->instance()->getAction('synchronize')->isIconButton());
-            $component->callAction('synchronize')->assertNotified('Aggiornamento richiesto');
+            $component->callAction('synchronize')->assertNotified('Aggiornamento avviato');
             $this->assertTrue(Cache::get('gravityzone-sync-requested'));
             $component->callAction('synchronize')->assertNotified('Aggiornamento già richiesto o in corso');
         }
@@ -48,7 +59,7 @@ class BackgroundSynchronizationTest extends TestCase
         $this->travelTo(now()->setDate(2026, 11, 11)->setTime(10, 0));
         $settings = GravityZoneSetting::find(1);
         $settings->forceFill(['companies_sync_attempted_at' => now()->subDay(), 'companies_sync_error' => 'Errore precedente.'])->save();
-        Livewire::test(Licenze::class)->callAction('synchronize')->assertNotified('Aggiornamento richiesto');
+        Livewire::test(Licenze::class)->callAction('synchronize')->assertNotified('Aggiornamento avviato');
         Livewire::test(ManageCompanies::class)->assertNotNotified('Aggiornamento GravityZone non riuscito');
 
         $this->travel(1)->minutes();
@@ -60,7 +71,7 @@ class BackgroundSynchronizationTest extends TestCase
         Livewire::test(Licenze::class)->assertNotNotified('Aggiornamento GravityZone non riuscito');
 
         Cache::forget('gravityzone-sync-requested');
-        Livewire::test(ManageCompanies::class)->callAction('synchronize')->assertNotified('Aggiornamento richiesto');
+        Livewire::test(ManageCompanies::class)->callAction('synchronize')->assertNotified('Aggiornamento avviato');
         $this->travel(1)->minutes();
         $settings->forceFill([
             'companies_sync_attempted_at' => now(), 'companies_sync_error' => null,

@@ -60,7 +60,8 @@ class CompanySynchronizationTest extends TestCase
         $this->assertTrue($company->license_synced_at->equalTo(now()));
         $this->assertTrue(GravityZoneSetting::find(1)->companies_synced_at->equalTo(now()));
         $this->assertNull(GravityZoneSetting::find(1)->companies_sync_error);
-        Sleep::assertSleptTimes(4);
+        // One request per method per sync: no round waits for the previous one.
+        Sleep::assertNeverSlept();
         Http::assertSentCount(3);
         Mail::assertNothingSent();
     }
@@ -283,7 +284,8 @@ class CompanySynchronizationTest extends TestCase
             : Http::response('fake-test-key', 429, ['Retry-After' => '90']));
 
         $this->artisan('bitlicense:sync-companies')->assertFailed();
-        Http::assertSentCount(2);
+        // Both license reads share the first concurrent round; details are never requested.
+        Http::assertSentCount(3);
         $this->assertDatabaseCount('companies', 2);
         foreach (Company::all() as $company) {
             $this->assertTrue($company->is_present);

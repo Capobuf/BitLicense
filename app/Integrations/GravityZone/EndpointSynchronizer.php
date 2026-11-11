@@ -42,45 +42,50 @@ class EndpointSynchronizer
             $owners = [];
             $conflicts = [];
             $companies = Company::query()->where('is_present', true)->orderBy('id')->get();
+            // One client paces all reads and reuses its connections.
+            $client = app(GravityZoneClient::class);
 
-            foreach ($companies as $company) {
-                if ($company->gravityzone_type === 0 && $company->can_manage_security === false) {
-                    $company->forceFill(['endpoints_sync_error' => null])->save();
+            $readable = $companies->reject(fn (Company $company): bool => $company->gravityzone_type === 0 && $company->can_manage_security === false);
+            $companies->diff($readable)->each(fn (Company $company) => $company->forceFill(['endpoints_sync_error' => null])->save());
 
-                    continue;
-                }
-
+            foreach ($readable as $company) {
                 $company->forceFill([
                     'endpoints_sync_attempted_at' => now(),
                     'endpoints_sync_error' => GravityZoneSetting::SYNC_IN_PROGRESS,
                 ])->save();
+            }
 
-                try {
-                    if ($interruptedBy !== null) {
-                        throw new GravityZoneException($interruptedBy);
-                    }
+            try {
+                $results = $readable->isEmpty() ? [] : $client->getNetworkInventoryItems($settings, $readable->mapWithKeys(fn (Company $company): array => [
+                    $company->gravityzone_id => $company->gravityzone_type === 0 ? $companies->pluck('gravityzone_id')->all() : [],
+                ])->all());
+            } catch (GravityZoneException $exception) {
+                $results = array_fill_keys($readable->pluck('gravityzone_id')->all(), $exception);
+            }
 
-                    $items = app(GravityZoneClient::class)->getNetworkInventoryItems(
-                        $settings, $company->gravityzone_id,
-                        $company->gravityzone_type === 0 ? $companies->pluck('gravityzone_id')->all() : [],
-                    );
-                    $inventories[$company->id] = $items;
+            foreach ($readable as $company) {
+                $items = $results[$company->gravityzone_id];
 
-                    foreach ($items as $item) {
-                        if (isset($owners[$item['id']]) && $owners[$item['id']] !== $company->id) {
-                            $conflicts[$owners[$item['id']]] = true;
-                            $conflicts[$company->id] = true;
-                        }
-                        $owners[$item['id']] = $company->id;
-                    }
-                } catch (GravityZoneException $exception) {
+                if ($items instanceof GravityZoneException) {
                     $failures++;
-                    $firstError ??= $exception->getMessage();
-                    $company->forceFill(['endpoints_sync_error' => $exception->getMessage()])->save();
+                    $firstError ??= $items->getMessage();
+                    $company->forceFill(['endpoints_sync_error' => $items->getMessage()])->save();
 
-                    if ($exception->stopSynchronization) {
-                        $interruptedBy = $exception->getMessage();
+                    if ($items->stopSynchronization) {
+                        $interruptedBy ??= $items->getMessage();
                     }
+
+                    continue;
+                }
+
+                $inventories[$company->id] = $items;
+
+                foreach ($items as $item) {
+                    if (isset($owners[$item['id']]) && $owners[$item['id']] !== $company->id) {
+                        $conflicts[$owners[$item['id']]] = true;
+                        $conflicts[$company->id] = true;
+                    }
+                    $owners[$item['id']] = $company->id;
                 }
             }
 
@@ -145,31 +150,41 @@ class EndpointSynchronizer
 
                 $licenseFailures = 0;
                 $licenseError = null;
+                $managed = [];
                 foreach ($items as $item) {
-                    $computer = Computer::query()->where('gravityzone_id', $item['id']);
+                    if ($item['is_managed'] === true) {
+                        $managed[] = $item['id'];
+                    } else {
+                        Computer::query()->where('gravityzone_id', $item['id'])
+                            ->update(['gravityzone_license_status' => null, 'license_checked_at' => null, 'license_sync_error' => null]);
+                    }
+                }
 
-                    if ($item['is_managed'] !== true) {
-                        $computer->update(['gravityzone_license_status' => null, 'license_checked_at' => null, 'license_sync_error' => null]);
+                try {
+                    if ($interruptedBy !== null) {
+                        throw new GravityZoneException($interruptedBy);
+                    }
+                    $statuses = $managed === [] ? [] : $client->getManagedEndpointDetails($settings, $managed, $company->gravityzone_id);
+                } catch (GravityZoneException $exception) {
+                    $statuses = array_fill_keys($managed, $exception);
+                }
+
+                foreach ($statuses as $endpointId => $status) {
+                    $computer = Computer::query()->where('gravityzone_id', (string) $endpointId);
+
+                    if ($status instanceof GravityZoneException) {
+                        $computer->update(['license_sync_error' => $status->getMessage()]);
+                        $licenseFailures++;
+                        $licenseError ??= $status->getMessage();
+
+                        if ($status->stopSynchronization) {
+                            $interruptedBy ??= $status->getMessage();
+                        }
 
                         continue;
                     }
 
-                    try {
-                        if ($interruptedBy !== null) {
-                            throw new GravityZoneException($interruptedBy);
-                        }
-
-                        $status = app(GravityZoneClient::class)->getManagedEndpointDetails($settings, $item['id'], $company->gravityzone_id);
-                        $computer->update(['gravityzone_license_status' => $status, 'license_checked_at' => now(), 'license_sync_error' => null]);
-                    } catch (GravityZoneException $exception) {
-                        $computer->update(['license_sync_error' => $exception->getMessage()]);
-                        $licenseFailures++;
-                        $licenseError ??= $exception->getMessage();
-
-                        if ($exception->stopSynchronization) {
-                            $interruptedBy = $exception->getMessage();
-                        }
-                    }
+                    $computer->update(['gravityzone_license_status' => $status, 'license_checked_at' => now(), 'license_sync_error' => null]);
                 }
 
                 $error = $licenseFailures > 0 ? "Stato licenza non aggiornato per {$licenseFailures} computer. {$licenseError}" : null;

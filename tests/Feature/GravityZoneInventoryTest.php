@@ -30,6 +30,7 @@ class GravityZoneInventoryTest extends TestCase
 
     public function test_documented_ad_items_are_paginated_and_overlap_with_the_company_query_is_not_duplicated(): void
     {
+        $this->freezeTime();
         // Projections of official getNetworkInventoryItems AD examples: anonymized, split into two test pages.
         $firstPage = $this->fixture('inventory-page-1');
         $secondPage = $this->fixture('inventory-page-2');
@@ -59,7 +60,8 @@ class GravityZoneInventoryTest extends TestCase
             $request->hasHeader('Authorization', 'Basic '.base64_encode(self::TEST_KEY.':')) &&
             $request['method'] === 'getNetworkInventoryItems' && $request['jsonrpc'] === '2.0' && $request['id'] === self::RPC_ID);
         Http::assertSentCount(4);
-        Sleep::assertSleptTimes(4);
+        // Instant fake responses: every request after the first waits for the pacing interval.
+        Sleep::assertSleptTimes(3);
     }
 
     public function test_ad_only_endpoints_are_read_and_discovery_selects_exact_ad_groups(): void
@@ -247,6 +249,37 @@ class GravityZoneInventoryTest extends TestCase
         Http::fakeSequence()->push($this->page([]))->push($this->page($items));
     }
 
+    public function test_companies_are_read_four_per_round_in_page_order_and_a_failure_stays_with_its_company(): void
+    {
+        $this->freezeTime();
+        Http::fake(function (Request $request) {
+            $company = $request['params']['parentId'];
+            if (isset($request['params']['filters']['details'])) {
+                return Http::response($this->page([]));
+            }
+
+            return Http::response($company === 'company-3'
+                ? $this->page([$this->item(['id' => 'pc-3', 'companyId' => 'company-3'])], page: 2)
+                : $this->page([$this->item(['id' => 'pc-'.substr($company, -1), 'companyId' => $company])]));
+        });
+        $ids = ['company-1', 'company-2', 'company-3', 'company-4', 'company-5'];
+
+        $results = app(GravityZoneClient::class)->getNetworkInventoryItems(new GravityZoneSetting([
+            'api_url' => self::API_URL, 'api_key' => self::TEST_KEY,
+        ]), array_fill_keys($ids, []));
+
+        $this->assertSame($ids, array_keys($results));
+        $this->assertInstanceOf(GravityZoneException::class, $results['company-3']);
+        $this->assertFalse($results['company-3']->stopSynchronization);
+        foreach (['company-1', 'company-2', 'company-4', 'company-5'] as $company) {
+            $this->assertSame(['pc-'.substr($company, -1)], array_column($results[$company], 'id'));
+        }
+        // Rounds: AD discovery of companies 1-4, their computers, then company 5 twice.
+        $sent = Http::recorded()->map(fn (array $pair): string => $pair[0]['params']['parentId'].(isset($pair[0]['params']['filters']['details']) ? ':ad' : ''))->all();
+        $this->assertSame(['company-1:ad', 'company-2:ad', 'company-3:ad', 'company-4:ad', 'company-1', 'company-2', 'company-3', 'company-4', 'company-5:ad', 'company-5'], $sent);
+        Sleep::assertSequence(array_fill(0, 3, Sleep::for(1000)->milliseconds()));
+    }
+
     private function fixture(string $name): array
     {
         return json_decode(file_get_contents(base_path('tests/Fixtures/GravityZone/'.$name.'.json')), true, flags: JSON_THROW_ON_ERROR);
@@ -275,9 +308,11 @@ class GravityZoneInventoryTest extends TestCase
 
     private function readInventory(string $companyId = 'company-1', array $otherCompanyIds = []): array
     {
-        return app(GravityZoneClient::class)->getNetworkInventoryItems(new GravityZoneSetting([
+        $result = app(GravityZoneClient::class)->getNetworkInventoryItems(new GravityZoneSetting([
             'api_url' => self::API_URL, 'api_key' => self::TEST_KEY,
-        ]), $companyId, $otherCompanyIds);
+        ]), [$companyId => $otherCompanyIds])[$companyId];
+
+        return $result instanceof GravityZoneException ? throw $result : $result;
     }
 
     private function assertSanitizedFailure(): GravityZoneException

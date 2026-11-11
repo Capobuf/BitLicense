@@ -49,7 +49,7 @@ Implement only the approved GitHub issue. Do not add a CRM, contracts, reseller 
 
 ### Customer-approved background synchronization (04/11/2026)
 
-The customer requested invisible automatic synchronization once a day, plus discreet refresh icons in Licenze and Aziende. Run companies then computers at 03:00 Europe/Rome through Scheduler/Cron. The administrator-only icons queue a deduplicated request for the next Cron tick; they never call GravityZone during the web request. Preserve the existing read-only API contract, local data protection and error reporting. The customer explicitly authorized accumulating this refinement on the current local branch with the pending #33/#10 changes; push and merge still require separate approvals.
+The customer requested invisible automatic synchronization once a day, plus discreet refresh icons in Licenze and Aziende. Run companies then computers at 03:00 Europe/Rome through Scheduler/Cron. The administrator-only icons queue a deduplicated request; on 11/11/2026 the customer approved starting it immediately after the response is sent (Laravel `defer()` in the same PHP process), never before the response, with the queued request kept as the next Cron tick's fallback. Preserve the existing read-only API contract, local data protection and error reporting. The customer explicitly authorized accumulating this refinement on the current local branch with the pending #33/#10 changes; push and merge still require separate approvals.
 
 ## Credentials and mandatory customer intervention
 

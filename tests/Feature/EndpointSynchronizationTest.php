@@ -132,8 +132,9 @@ class EndpointSynchronizationTest extends TestCase
         app(EndpointSynchronizer::class)->sync();
         $before = Computer::sole()->toArray();
         $this->mock(GravityZoneClient::class, function (MockInterface $mock): void {
-            $mock->shouldReceive('getNetworkInventoryItems')->once()->withArgs(fn ($settings, $id) => $id === 'company-1')
-                ->andThrow(new GravityZoneException('Limite richieste. Riprova tra 90 secondi.', stopSynchronization: true));
+            $stop = new GravityZoneException('Limite richieste. Riprova tra 90 secondi.', stopSynchronization: true);
+            $mock->shouldReceive('getNetworkInventoryItems')->once()->withArgs(fn ($settings, $companies) => array_keys($companies) === ['company-1', 'company-2'])
+                ->andReturn(['company-1' => $stop, 'company-2' => $stop]);
         });
         $this->artisan('bitlicense:sync-endpoints')->assertFailed();
         $this->assertSame($before, Computer::sole()->toArray());
@@ -258,8 +259,8 @@ class EndpointSynchronizationTest extends TestCase
         $previous = Computer::orderBy('id')->get()->map->only(['gravityzone_license_status', 'license_checked_at'])->all();
         $this->travel(1)->hours();
         $this->mock(GravityZoneClient::class, function (MockInterface $mock) use ($items): void {
-            $mock->shouldReceive('getNetworkInventoryItems')->twice()->andReturnUsing(fn ($settings, $id) => $items[$id]);
-            $mock->shouldReceive('getManagedEndpointDetails')->once()->withArgs(fn ($settings, $id, $companyId) => $id === 'endpoint-1' && $companyId === 'company-1')
+            $mock->shouldReceive('getNetworkInventoryItems')->once()->andReturnUsing(fn ($settings, array $companies) => array_intersect_key($items, $companies));
+            $mock->shouldReceive('getManagedEndpointDetails')->once()->withArgs(fn ($settings, $ids, $companyId) => $ids === ['endpoint-1', 'endpoint-2'] && $companyId === 'company-1')
                 ->andThrow(new GravityZoneException('Limite richieste. Riprova tra 90 secondi.', stopSynchronization: true));
         });
 
@@ -278,7 +279,7 @@ class EndpointSynchronizationTest extends TestCase
         app(EndpointSynchronizer::class)->sync();
         $items = [array_replace($this->item('unmanaged'), ['is_managed' => false]), array_replace($this->item('unknown'), ['is_managed' => null])];
         $this->mock(GravityZoneClient::class, function (MockInterface $mock) use ($items): void {
-            $mock->shouldReceive('getNetworkInventoryItems')->once()->andReturn($items);
+            $mock->shouldReceive('getNetworkInventoryItems')->once()->andReturn(['company-1' => $items]);
             $mock->shouldNotReceive('getManagedEndpointDetails');
         });
 
@@ -386,14 +387,21 @@ class EndpointSynchronizationTest extends TestCase
     private function mockItems(array $items, array $licenses = []): void
     {
         $this->mock(GravityZoneClient::class, function (MockInterface $mock) use ($items, $licenses): void {
-            $mock->shouldReceive('getNetworkInventoryItems')->andReturnUsing(fn ($settings, $companyId) => $items[$companyId] ?? []);
-            $mock->shouldReceive('getManagedEndpointDetails')->andReturnUsing(function ($settings, $endpointId) use ($licenses): ?int {
-                $result = array_key_exists($endpointId, $licenses) ? $licenses[$endpointId] : 1;
-                if ($result instanceof GravityZoneException) {
-                    throw $result;
+            $mock->shouldReceive('getNetworkInventoryItems')->andReturnUsing(fn ($settings, array $companies) => array_map(
+                fn (string $companyId) => $items[$companyId] ?? [], array_combine(array_keys($companies), array_keys($companies)),
+            ));
+            // Mirrors the client: a stopping failure is returned for every endpoint not yet read.
+            $mock->shouldReceive('getManagedEndpointDetails')->andReturnUsing(function ($settings, array $endpointIds) use ($licenses): array {
+                $results = [];
+                $stop = null;
+                foreach ($endpointIds as $endpointId) {
+                    $results[$endpointId] = $stop ?? (array_key_exists($endpointId, $licenses) ? $licenses[$endpointId] : 1);
+                    if ($results[$endpointId] instanceof GravityZoneException && $results[$endpointId]->stopSynchronization) {
+                        $stop = $results[$endpointId];
+                    }
                 }
 
-                return $result;
+                return $results;
             });
         });
     }

@@ -156,7 +156,9 @@ class ComputerTest extends TestCase
         $this->assertRejected(fn () => $local->reconcileWith($remote, 1));
         GravityZoneSetting::create(['id' => 1, 'api_url' => 'https://gravityzone.example.test/api', 'api_key' => 'fake-test-key']);
         $this->mock(GravityZoneClient::class, function (MockInterface $mock): void {
-            $mock->shouldReceive('getNetworkInventoryItems')->andReturn([['id' => 'remote-id', 'name' => 'RINOMINATO', 'platform' => null, 'is_managed' => null, 'is_isolated' => null]]);
+            $mock->shouldReceive('getNetworkInventoryItems')->andReturnUsing(fn ($settings, array $companies) => array_map(
+                fn () => [['id' => 'remote-id', 'name' => 'RINOMINATO', 'platform' => null, 'is_managed' => null, 'is_isolated' => null]], $companies,
+            ));
         });
         app(EndpointSynchronizer::class)->sync();
         $this->assertDatabaseCount('computers', 1);
