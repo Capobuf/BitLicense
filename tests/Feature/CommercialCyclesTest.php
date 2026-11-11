@@ -240,7 +240,9 @@ class CommercialCyclesTest extends TestCase
         GravityZoneSetting::create(['id' => 1, 'api_url' => 'https://gravityzone.example.test/api', 'api_key' => 'fake-test-key']);
         $this->mock(GravityZoneClient::class, function (MockInterface $mock): void {
             // Shape already exercised by EndpointSynchronizationTest; no live request.
-            $mock->shouldReceive('getNetworkInventoryItems')->andReturn([['id' => 'remote-id', 'name' => 'Rinominato', 'platform' => null, 'is_managed' => null, 'is_isolated' => null, 'first_seen_on' => '2025-06-01']]);
+            $mock->shouldReceive('getNetworkInventoryItems')->andReturnUsing(fn ($settings, array $companies) => array_map(
+                fn () => [['id' => 'remote-id', 'name' => 'Rinominato', 'platform' => null, 'is_managed' => null, 'is_isolated' => null, 'first_seen_on' => '2025-06-01']], $companies,
+            ));
         });
         app(EndpointSynchronizer::class)->sync();
         app(EndpointSynchronizer::class)->sync();

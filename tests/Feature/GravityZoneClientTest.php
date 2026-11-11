@@ -81,7 +81,7 @@ class GravityZoneClientTest extends TestCase
 
         $client = app(GravityZoneClient::class);
         foreach ([false, true, null, null] as $status) {
-            $this->assertSame(['is_suspended' => $status, 'gravityzone_type' => null, 'can_manage_security' => null], $client->getCompanyDetails($this->settings(), 'company-1'));
+            $this->assertSame(['is_suspended' => $status, 'gravityzone_type' => null, 'can_manage_security' => null], $this->companyDetails($client, 'company-1'));
         }
         Http::assertSent(fn (Request $request): bool => $request->method() === 'POST' &&
             $request->url() === self::API_URL.'/v1.0/jsonrpc/companies' &&
@@ -101,7 +101,7 @@ class GravityZoneClientTest extends TestCase
             ->push(['id' => self::RPC_ID, 'jsonrpc' => '2.0', 'result' => [['id' => 'client-1', 'name' => 'Cliente esempio']]]);
         $client = app(GravityZoneClient::class);
         $this->assertSame(['is_suspended' => false, 'gravityzone_type' => 0, 'can_manage_security' => false],
-            $client->getCompanyDetails($this->settings(), 'partner-1'));
+            $this->companyDetails($client, 'partner-1'));
         $this->assertSame([['id' => 'client-1', 'name' => 'Cliente esempio']], $client->getCompaniesList($this->settings(), 'partner-1'));
         Http::assertSent(fn (Request $request): bool => $request['method'] === 'getCompaniesList' && $request['params'] === ['parentId' => 'partner-1']);
     }
@@ -126,7 +126,7 @@ class GravityZoneClientTest extends TestCase
 
         $this->expectException(GravityZoneException::class);
         $this->expectExceptionMessage('stato aziendale valido');
-        app(GravityZoneClient::class)->getCompanyDetails($this->settings(), 'company-1');
+        $this->companyDetails(app(GravityZoneClient::class), 'company-1');
     }
 
     public static function invalidCompanyDetails(): array
@@ -287,8 +287,18 @@ class GravityZoneClientTest extends TestCase
             $this->travel($seconds - 1)->seconds();
             foreach (GravityZoneClient::READ_ONLY_METHODS as $method) {
                 try {
-                    $arguments = $method === 'getManagedEndpointDetails' ? ['endpoint-1', 'company-1'] : ['company-1'];
-                    (new GravityZoneClient)->{$method}($this->settings(), ...$arguments);
+                    $arguments = match ($method) {
+                        'getCompaniesList' => ['company-1'],
+                        'getNetworkInventoryItems' => [['company-1' => []]],
+                        'getManagedEndpointDetails' => [['endpoint-1'], 'company-1'],
+                        default => [['company-1']],
+                    };
+                    $result = (new GravityZoneClient)->{$method}($this->settings(), ...$arguments);
+                    // Concurrent reads return the failure for each requested ID instead of throwing it.
+                    $failure = $result['company-1'] ?? $result['endpoint-1'] ?? null;
+                    if ($failure instanceof GravityZoneException) {
+                        throw $failure;
+                    }
                     $this->fail('Nessuna lettura deve partire durante l’attesa condivisa.');
                 } catch (GravityZoneException $exception) {
                     $this->assertTrue($exception->stopSynchronization);
@@ -316,6 +326,13 @@ class GravityZoneClientTest extends TestCase
         });
 
         $this->assertSame([], app(GravityZoneClient::class)->getCompaniesList($this->settings(self::API_URL.'/')));
+    }
+
+    private function companyDetails(GravityZoneClient $client, string $companyId): array
+    {
+        $result = $client->getCompanyDetails($this->settings(), [$companyId])[$companyId];
+
+        return $result instanceof GravityZoneException ? throw $result : $result;
     }
 
     private function settings(?string $url = self::API_URL, ?string $key = self::TEST_KEY): GravityZoneSetting

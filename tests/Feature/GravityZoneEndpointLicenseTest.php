@@ -46,7 +46,36 @@ class GravityZoneEndpointLicenseTest extends TestCase
                 'params' => ['endpointId' => 'endpoint-1'],
             ]);
         Http::assertSentCount(1);
-        Sleep::assertSleptTimes(1);
+        Sleep::assertNeverSlept();
+    }
+
+    public function test_endpoints_are_read_in_paced_batches_of_eight_and_a_rate_limit_skips_later_batches(): void
+    {
+        $this->freezeTime();
+        Http::fake(fn (Request $request) => $request['params']['endpointId'] === 'endpoint-10'
+            ? Http::response(self::TEST_KEY, 429, ['Retry-After' => '30'])
+            : Http::response(['id' => self::RPC_ID, 'jsonrpc' => '2.0', 'result' => [
+                'id' => $request['params']['endpointId'], 'companyId' => 'company-1', 'agent' => ['licensed' => 1],
+            ]]));
+        $ids = array_map(fn (int $n): string => "endpoint-{$n}", range(1, 20));
+
+        $results = app(GravityZoneClient::class)->getManagedEndpointDetails(new GravityZoneSetting([
+            'api_url' => self::API_URL, 'api_key' => self::TEST_KEY,
+        ]), $ids, 'company-1');
+
+        $this->assertSame($ids, array_keys($results));
+        foreach ($results as $id => $result) {
+            if (in_array($id, ['endpoint-10', 'endpoint-17', 'endpoint-18', 'endpoint-19', 'endpoint-20'], true)) {
+                $this->assertInstanceOf(GravityZoneException::class, $result);
+                $this->assertTrue($result->stopSynchronization);
+                $this->assertStringNotContainsString(self::TEST_KEY, $result->getMessage());
+            } else {
+                $this->assertSame(1, $result, $id);
+            }
+        }
+        // The second batch was already sent when endpoint-10 hit the limit; the third is never sent.
+        Http::assertSentCount(16);
+        Sleep::assertSequence([Sleep::for(1000)->milliseconds()]);
     }
 
     #[DataProvider('licenseStates')]
@@ -177,9 +206,11 @@ class GravityZoneEndpointLicenseTest extends TestCase
 
     private function readLicense(string $endpointId = 'endpoint-1', string $companyId = 'company-1'): ?int
     {
-        return app(GravityZoneClient::class)->getManagedEndpointDetails(new GravityZoneSetting([
+        $result = app(GravityZoneClient::class)->getManagedEndpointDetails(new GravityZoneSetting([
             'api_url' => self::API_URL, 'api_key' => self::TEST_KEY,
-        ]), $endpointId, $companyId);
+        ]), [$endpointId], $companyId)[$endpointId];
+
+        return $result instanceof GravityZoneException ? throw $result : $result;
     }
 
     private function assertSanitizedFailure(): GravityZoneException

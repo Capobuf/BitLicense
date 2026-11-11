@@ -241,9 +241,11 @@ class GravityZoneLicenseTest extends TestCase
 
     private function readLicense(string $companyId = 'company-1'): array
     {
-        return app(GravityZoneClient::class)->getLicenseInfo(new GravityZoneSetting([
+        $result = app(GravityZoneClient::class)->getLicenseInfo(new GravityZoneSetting([
             'api_url' => self::API_URL, 'api_key' => self::TEST_KEY,
-        ]), $companyId);
+        ]), [$companyId])[$companyId];
+
+        return $result instanceof GravityZoneException ? throw $result : $result;
     }
 
     private function envelope(mixed $result): array

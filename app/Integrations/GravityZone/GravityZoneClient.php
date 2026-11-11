@@ -5,6 +5,8 @@ namespace App\Integrations\GravityZone;
 use App\Models\GravityZoneSetting;
 use DateTimeImmutable;
 use DateTimeZone;
+use Generator;
+use GuzzleHttp\Utils;
 use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
@@ -23,6 +25,11 @@ class GravityZoneClient
 
     private const RETRY_AT_CACHE_KEY = 'gravityzone-retry-at';
 
+    private mixed $handler = null;
+
+    /** @var array<string, float> */
+    private array $nextRequestAt = [];
+
     /** @return list<array{id: string, name: string}> */
     public function getCompaniesList(GravityZoneSetting $settings, ?string $parentId = null): array
     {
@@ -30,18 +37,7 @@ class GravityZoneClient
             throw new GravityZoneException('ID azienda GravityZone non valido.');
         }
 
-        try {
-            $response = $this->connection($settings)->post('/v1.0/jsonrpc/network', [
-                'jsonrpc' => '2.0',
-                'id' => self::REQUEST_ID,
-                'method' => 'getCompaniesList',
-                'params' => $parentId === null ? [] : ['parentId' => $parentId],
-            ]);
-        } catch (ConnectionException) {
-            throw new GravityZoneException('Impossibile contattare GravityZone: errore di rete o tempo di attesa scaduto. Riprova più tardi.', stopSynchronization: true);
-        }
-
-        $payload = $this->responsePayload($response);
+        $payload = $this->call($settings, '/v1.0/jsonrpc/network', 'getCompaniesList', $parentId === null ? [] : ['parentId' => $parentId]);
 
         if (! isset($payload->result) || ! is_array($payload->result) || ! array_is_list($payload->result)) {
             throw new GravityZoneException('La risposta GravityZone non contiene un elenco aziende valido.');
@@ -65,26 +61,74 @@ class GravityZoneClient
         return $companies;
     }
 
-    /** @return array{is_suspended: ?bool, gravityzone_type: ?int, can_manage_security: ?bool} */
-    public function getCompanyDetails(GravityZoneSetting $settings, string $companyId): array
+    /**
+     * Default limit of ten requests/second per key: eight concurrent requests per second.
+     *
+     * @param  list<string>  $companyIds
+     * @return array<string, array{is_suspended: ?bool, gravityzone_type: ?int, can_manage_security: ?bool}|GravityZoneException>
+     */
+    public function getCompanyDetails(GravityZoneSetting $settings, array $companyIds): array
     {
-        if (trim($companyId) === '' || mb_strlen($companyId) > 255) {
-            throw new GravityZoneException('ID azienda GravityZone non valido.');
-        }
+        $this->assertIds($companyIds, 'ID azienda GravityZone non valido.');
 
-        try {
-            $response = $this->connection($settings)->post('/v1.0/jsonrpc/companies', [
-                'jsonrpc' => '2.0',
-                'id' => self::REQUEST_ID,
-                'method' => 'getCompanyDetails',
-                'params' => ['companyId' => $companyId],
-            ]);
-        } catch (ConnectionException) {
-            throw new GravityZoneException('Impossibile contattare GravityZone: errore di rete o tempo di attesa scaduto. Riprova più tardi.', stopSynchronization: true);
-        }
+        return $this->concurrently($settings, '/v1.0/jsonrpc/companies', 'getCompanyDetails', array_combine($companyIds, array_map(
+            fn (string $id): Generator => $this->single(['companyId' => $id], fn (mixed $company): array => $this->companyDetails($company, $id)),
+            $companyIds,
+        )), 8);
+    }
 
-        $company = $this->responsePayload($response)->result ?? null;
+    /**
+     * Licensing allows five requests/second per key: four concurrent requests per second.
+     *
+     * @param  list<string>  $companyIds
+     * @return array<string, array{technical_license_type: string, technical_expires_on: ?string, technical_product: ?string}|GravityZoneException>
+     */
+    public function getLicenseInfo(GravityZoneSetting $settings, array $companyIds): array
+    {
+        $this->assertIds($companyIds, 'ID azienda GravityZone non valido.');
 
+        return $this->concurrently($settings, '/v1.0/jsonrpc/licensing', 'getLicenseInfo', array_combine($companyIds, array_map(
+            fn (string $id): Generator => $this->single(['companyId' => $id], fn (mixed $license): array => $this->licenseInfo($license)),
+            $companyIds,
+        )), 4);
+    }
+
+    /**
+     * Reads the computers of several companies: each company's pages stay in order, four requests per second overall.
+     *
+     * @param  array<string, list<string>>  $companies  Company ID => other imported company IDs its recursive inventory may contain.
+     * @return array<string, list<array{id: string, name: string, platform: ?string, is_managed: ?bool, is_isolated: ?bool, first_seen_on: ?string}>|GravityZoneException>
+     */
+    public function getNetworkInventoryItems(GravityZoneSetting $settings, array $companies): array
+    {
+        $ids = array_map('strval', array_keys($companies));
+        $this->assertIds($ids, 'ID azienda GravityZone non valido.');
+
+        return $this->concurrently($settings, '/v1.1/jsonrpc/network', 'getNetworkInventoryItems', array_combine($ids, array_map(
+            fn (string $id): Generator => $this->inventoryReader($id, $companies[$id]),
+            $ids,
+        )), 4);
+    }
+
+    /**
+     * Reads the license code of each managed endpoint, eight concurrent requests per second.
+     *
+     * @param  list<string>  $endpointIds
+     * @return array<string, int|GravityZoneException|null>
+     */
+    public function getManagedEndpointDetails(GravityZoneSetting $settings, array $endpointIds, string $companyId): array
+    {
+        $this->assertIds([...$endpointIds, $companyId], 'ID endpoint o azienda GravityZone non valido.');
+
+        return $this->concurrently($settings, '/v1.0/jsonrpc/network', 'getManagedEndpointDetails', array_combine($endpointIds, array_map(
+            fn (string $id): Generator => $this->single(['endpointId' => $id], fn (mixed $endpoint): ?int => $this->endpointLicense($endpoint, $id, $companyId)),
+            $endpointIds,
+        )), 8);
+    }
+
+    /** @return array{is_suspended: ?bool, gravityzone_type: ?int, can_manage_security: ?bool} */
+    private function companyDetails(mixed $company, string $companyId): array
+    {
         if (! $company instanceof stdClass || ($company->id ?? null) !== $companyId ||
             (isset($company->isSuspended) && ! is_bool($company->isSuspended)) ||
             (isset($company->type) && ! in_array($company->type, [0, 1], true)) ||
@@ -100,25 +144,8 @@ class GravityZoneClient
     }
 
     /** @return array{technical_license_type: string, technical_expires_on: ?string, technical_product: ?string} */
-    public function getLicenseInfo(GravityZoneSetting $settings, string $companyId): array
+    private function licenseInfo(mixed $license): array
     {
-        if (trim($companyId) === '' || mb_strlen($companyId) > 255) {
-            throw new GravityZoneException('ID azienda GravityZone non valido.');
-        }
-
-        try {
-            $response = $this->connection($settings)->post('/v1.0/jsonrpc/licensing', [
-                'jsonrpc' => '2.0',
-                'id' => self::REQUEST_ID,
-                'method' => 'getLicenseInfo',
-                'params' => ['companyId' => $companyId],
-            ]);
-        } catch (ConnectionException) {
-            throw new GravityZoneException('Impossibile contattare GravityZone: errore di rete o tempo di attesa scaduto. Riprova più tardi.', stopSynchronization: true);
-        }
-
-        $license = $this->responsePayload($response)->result ?? null;
-
         if (! $license instanceof stdClass || ! is_int($license->subscriptionType ?? null)) {
             throw new GravityZoneException('La risposta GravityZone non contiene dati di licenza aziendale validi.');
         }
@@ -185,17 +212,13 @@ class GravityZoneClient
         ];
     }
 
-    /** @return list<array{id: string, name: string, platform: ?string, is_managed: ?bool, is_isolated: ?bool, first_seen_on: ?string}> */
-    public function getNetworkInventoryItems(GravityZoneSetting $settings, string $companyId, array $otherCompanyIds = []): array
+    /** Yields one company's inventory page requests in order and returns its endpoints. */
+    private function inventoryReader(string $companyId, array $otherCompanyIds): Generator
     {
-        if (trim($companyId) === '' || mb_strlen($companyId) > 255) {
-            throw new GravityZoneException('ID azienda GravityZone non valido.');
-        }
-
         $parents = [$companyId];
 
         // AD computers require an explicit read below the discovered AD folder.
-        foreach ($this->inventoryItems($settings, $companyId, $companyId, ['details' => ['name' => 'Active Directory']], $otherCompanyIds) as $item) {
+        foreach (yield from $this->inventoryPages($companyId, $companyId, ['details' => ['name' => 'Active Directory']], $otherCompanyIds) as $item) {
             if ($item->type === 4 && $item->name === 'Active Directory' && $item->id !== $companyId) {
                 $parents[] = $item->id;
             }
@@ -204,7 +227,7 @@ class GravityZoneClient
         $endpoints = [];
 
         foreach ($parents as $parentId) {
-            foreach ($this->inventoryItems($settings, $parentId, $companyId, [
+            foreach (yield from $this->inventoryPages($parentId, $companyId, [
                 'type' => ['computers' => true, 'virtualMachines' => true, 'ec2Instances' => true],
                 'depth' => ['allItemsRecursively' => true],
             ], $otherCompanyIds) as $item) {
@@ -258,31 +281,8 @@ class GravityZoneClient
         return array_values($endpoints);
     }
 
-    public function getManagedEndpointDetails(GravityZoneSetting $settings, string $endpointId, string $companyId): ?int
+    private function endpointLicense(mixed $endpoint, string $endpointId, string $companyId): ?int
     {
-        if (trim($endpointId) === '' || mb_strlen($endpointId) > 255) {
-            throw new GravityZoneException('ID endpoint GravityZone non valido.');
-        }
-
-        if (trim($companyId) === '' || mb_strlen($companyId) > 255) {
-            throw new GravityZoneException('ID azienda GravityZone non valido.');
-        }
-
-        try {
-            $connection = $this->connection($settings);
-            Sleep::for(250)->milliseconds();
-            $response = $connection->post('/v1.0/jsonrpc/network', [
-                'jsonrpc' => '2.0',
-                'id' => self::REQUEST_ID,
-                'method' => 'getManagedEndpointDetails',
-                'params' => ['endpointId' => $endpointId],
-            ]);
-        } catch (ConnectionException) {
-            throw new GravityZoneException('Impossibile contattare GravityZone: errore di rete o tempo di attesa scaduto. Riprova più tardi.', stopSynchronization: true);
-        }
-
-        $endpoint = $this->responsePayload($response)->result ?? null;
-
         if (! $endpoint instanceof stdClass || ($endpoint->id ?? null) !== $endpointId ||
             ($endpoint->companyId ?? null) !== $companyId ||
             (isset($endpoint->agent) && ! $endpoint->agent instanceof stdClass)) {
@@ -298,26 +298,18 @@ class GravityZoneClient
         return in_array($licensed, [0, 1, 2, 6], true) ? $licensed : null;
     }
 
-    /** @return iterable<stdClass> */
-    private function inventoryItems(GravityZoneSetting $settings, string $parentId, string $companyId, array $filters, array $otherCompanyIds): iterable
+    /**
+     * Yields each page request of one container, receives its result and returns the validated items.
+     *
+     * @return Generator<int, array, mixed, list<stdClass>>
+     */
+    private function inventoryPages(string $parentId, string $companyId, array $filters, array $otherCompanyIds): Generator
     {
         $seen = [];
+        $items = [];
 
         for ($page = 1; $page <= 1000; $page++) {
-            try {
-                $connection = $this->connection($settings);
-                Sleep::for(250)->milliseconds();
-                $response = $connection->post('/v1.1/jsonrpc/network', [
-                    'jsonrpc' => '2.0',
-                    'id' => self::REQUEST_ID,
-                    'method' => 'getNetworkInventoryItems',
-                    'params' => ['parentId' => $parentId, 'page' => $page, 'perPage' => 100, 'filters' => $filters],
-                ]);
-            } catch (ConnectionException) {
-                throw new GravityZoneException('Impossibile contattare GravityZone: errore di rete o tempo di attesa scaduto. Riprova più tardi.', stopSynchronization: true);
-            }
-
-            $result = $this->responsePayload($response)->result ?? null;
+            $result = yield ['parentId' => $parentId, 'page' => $page, 'perPage' => 100, 'filters' => $filters];
 
             if (! $result instanceof stdClass || ($result->page ?? null) !== $page ||
                 ($result->perPage ?? null) !== 100 || ! is_bool($result->hasMoreRecords ?? null) ||
@@ -346,15 +338,122 @@ class GravityZoneClient
                     throw new GravityZoneException('La risposta GravityZone contiene elementi inventario incompleti, duplicati o di un’altra azienda.');
                 }
 
-                yield $item;
+                $items[] = $item;
             }
 
             if (! $result->hasMoreRecords) {
-                return;
+                return $items;
             }
         }
 
         throw new GravityZoneException('La lettura GravityZone supera il limite di sicurezza di 1000 pagine per contenitore. Nessun elenco parziale viene importato.');
+    }
+
+    /**
+     * Drives readers concurrently. A reader is a generator that yields request params, receives the JSON-RPC
+     * result and returns its value. Each round sends at most $perSecond requests, one per reader, and starts
+     * at least one second after the previous round of the same method.
+     *
+     * @param  array<string, Generator>  $readers
+     * @return array<string, mixed> In input order: each return value, or the failure; a stopping failure is returned for every reader not completed.
+     */
+    private function concurrently(GravityZoneSetting $settings, string $path, string $method, array $readers, int $perSecond): array
+    {
+        $results = array_fill_keys(array_keys($readers), null);
+        $stop = null;
+
+        while ($readers !== []) {
+            $round = array_slice($readers, 0, $perSecond, true);
+            $promises = [];
+
+            try {
+                if ($stop === null) {
+                    $this->pace($method, 1000);
+                    foreach ($round as $key => $reader) {
+                        $promises[$key] = $this->connection($settings)->async()->post($path, $this->body($method, $reader->current()))->buildPromise();
+                    }
+                }
+            } catch (GravityZoneException $exception) {
+                $stop = $exception;
+            }
+
+            foreach ($round as $key => $reader) {
+                try {
+                    $response = isset($promises[$key]) ? $promises[$key]->wait() : throw $stop;
+                    // Asynchronous requests return connection failures instead of throwing them.
+                    if (! $response instanceof Response) {
+                        throw $this->networkError();
+                    }
+
+                    $reader->send($this->responsePayload($response)->result ?? null);
+                    if ($reader->valid()) {
+                        continue;
+                    }
+
+                    $results[$key] = $reader->getReturn();
+                } catch (GravityZoneException $exception) {
+                    $results[$key] = $exception;
+                    if ($exception->stopSynchronization) {
+                        $stop ??= $exception;
+                    }
+                }
+
+                unset($readers[$key]);
+            }
+        }
+
+        return $results;
+    }
+
+    private function single(array $params, callable $parse): Generator
+    {
+        return $parse(yield $params);
+    }
+
+    private function assertIds(array $ids, string $message): void
+    {
+        foreach ($ids as $id) {
+            if (! is_string($id) || trim($id) === '' || mb_strlen($id) > 255) {
+                throw new GravityZoneException($message);
+            }
+        }
+    }
+
+    private function call(GravityZoneSetting $settings, string $path, string $method, array $params): stdClass
+    {
+        $connection = $this->connection($settings);
+        // Sequential reads stay at four per second, below the lowest documented limit of five.
+        $this->pace('sequential', 250);
+
+        try {
+            $response = $connection->post($path, $this->body($method, $params));
+        } catch (ConnectionException) {
+            throw $this->networkError();
+        }
+
+        return $this->responsePayload($response);
+    }
+
+    private function body(string $method, array $params): array
+    {
+        return ['jsonrpc' => '2.0', 'id' => self::REQUEST_ID, 'method' => $method, 'params' => $params];
+    }
+
+    /** Waits only for the part of the interval not already spent waiting for the previous response. */
+    private function pace(string $key, int $milliseconds): void
+    {
+        $wait = ($this->nextRequestAt[$key] ?? 0) - now()->getPreciseTimestamp(3);
+
+        if ($wait > 0) {
+            Sleep::for((int) ceil($wait))->milliseconds();
+        }
+
+        $this->nextRequestAt[$key] = now()->getPreciseTimestamp(3) + $milliseconds;
+    }
+
+    private function networkError(): GravityZoneException
+    {
+        return new GravityZoneException('Impossibile contattare GravityZone: errore di rete o tempo di attesa scaduto. Riprova più tardi.', stopSynchronization: true);
     }
 
     private function connection(GravityZoneSetting $settings): PendingRequest
@@ -385,7 +484,8 @@ class GravityZoneClient
             throw new GravityZoneException('Configura un URL API HTTPS valido e una chiave GravityZone prima di leggere i dati.', stopSynchronization: true);
         }
 
-        return Http::baseUrl($url)->acceptJson()->withBasicAuth($key, '')
+        // One shared handler reuses the TLS connections across the reads of a synchronization.
+        return Http::setHandler($this->handler ??= Utils::chooseHandler())->baseUrl($url)->acceptJson()->withBasicAuth($key, '')
             ->withoutRedirecting()->connectTimeout(5)->timeout(20);
     }
 

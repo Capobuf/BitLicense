@@ -218,11 +218,12 @@ L’apertura non sincronizza, invia email o modifica dati.
 L’aggiornamento automatico parte ogni giorno alle **03:00 Europe/Rome**,
 legge prima aziende e licenze tecniche, poi l’inventario computer e lo stato licenza di ogni endpoint gestito.
 Le pagine **Licenze** e **Aziende** hanno anche un’icona discreta
-**Aggiorna da GravityZone**, riservata agli amministratori: registra la richiesta
-e ritorna subito, senza modale o chiamate API nella richiesta web. Il Cron
-la prende in carico al minuto successivo; clic ripetuti vengono accorpati.
-La conferma indica che l’aggiornamento è richiesto, non che sia già terminato.
-Dopo qualche minuto ricaricare la pagina per consultare i nuovi dati. Le chiavi
+**Aggiorna da GravityZone**, riservata agli amministratori: registra la richiesta,
+risponde subito e avvia l’aggiornamento appena la risposta è stata inviata
+(`defer()` di Laravel, nello stesso processo PHP). Se l’avvio non riesce, il Cron
+prende in carico la richiesta al minuto successivo; clic ripetuti vengono accorpati.
+La conferma indica che l’aggiornamento è avviato, non che sia già terminato.
+Dopo circa un minuto ricaricare la pagina per consultare i nuovi dati. Le chiavi
 richiedono i permessi di lettura Network e Licensing. Gli operatori possono
 modificare i dati locali ma non avviare questa lettura né accedere alle credenziali.
 
@@ -256,7 +257,11 @@ php artisan schedule:list
 I comandi restituiscono un codice di errore se il rispettivo import non è
 completo. Un lock condiviso impedisce sovrapposizioni fra import aziende e
 computer; dopo un’interruzione anomala può restare occupato fino a un’ora.
-Licenze, inventario e dettagli endpoint sono letti con pause di almeno 250 ms. Un 429 interrompe
+Le letture partono a round di richieste parallele, al massimo un round al secondo
+per metodo: quattro per licenze aziendali e inventario (limite documentato cinque),
+otto per dettagli aziendali e stato licenza dei PC (limite dieci). L’inventario di
+ogni azienda resta letto pagina dopo pagina, ma più aziende avanzano insieme.
+Le connessioni HTTPS sono riusate durante l’aggiornamento. Un 429 interrompe
 l’import e applica un’attesa condivisa anche a nuovi clic e comandi, secondo
 `Retry-After` (60 secondi se assente/non valido), senza retry automatici.
 Il Scheduler controlla ogni minuto se sono le 03:00 oppure se esiste una
@@ -271,9 +276,12 @@ esplicito o al giro del giorno seguente.
 Solo dopo l’autorizzazione ai collegamenti reali, in sviluppo si può usare
 `php artisan schedule:work`, oppure un Cron che esegua ogni minuto
 `php /percorso/BitLicense/artisan schedule:run` come utente dell’applicazione.
-Il Cron è necessario anche per i pulsanti: senza di esso le richieste
-restano in attesa. La lettura dello stato aggiunge una richiesta per PC gestito;
-ora l’intero aggiornamento viene eseguito dalla CLI, fuori dalla richiesta web.
+Il Cron resta la riserva per i pulsanti: senza di esso una richiesta il cui
+avvio immediato non è riuscito resta in attesa. La lettura dello stato aggiunge
+una richiesta per PC gestito. L’avvio immediato richiede PHP-FPM (o LiteSpeed),
+che chiude la risposta prima di proseguire; il pool deve consentire qualche
+minuto di esecuzione (`request_terminate_timeout`). Con `php artisan serve` la
+richiesta del pulsante resta aperta fino al termine dell’aggiornamento.
 Non servono queue worker, Redis o nuovi servizi. La cache deve essere
 persistente e condivisa (configurazione predefinita: `CACHE_STORE=database`).
 Contratto API, fixture e verifiche storiche sono descritti in
