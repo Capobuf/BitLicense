@@ -82,6 +82,12 @@ class Computer extends Model
         return $this->originPeriods->isNotEmpty() || collect($this->history)->contains('event', 'transferred_out');
     }
 
+    /** Manual computers and those GravityZone still reports; the others keep their data but leave lists and counts. */
+    public function scopeDetected(Builder $query): Builder
+    {
+        return $query->where('is_present', true);
+    }
+
     public function scopeUnlinked(Builder $query): Builder
     {
         return $query->whereDoesntHave('periods')->whereDoesntHave('originPeriods')

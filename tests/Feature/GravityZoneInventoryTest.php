@@ -244,6 +244,24 @@ class GravityZoneInventoryTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_endpoints_in_the_company_deleted_folder_or_below_it_are_not_returned(): void
+    {
+        // Verified live on 11/11/2026: each company has a type-4 "Deleted" group directly below it.
+        $this->fakeInventory([
+            $this->item(['id' => 'deleted-pc', 'parentId' => 'deleted-folder']),
+            $this->item(['id' => 'nested-deleted-pc', 'parentId' => 'old-office']),
+            $this->item(['id' => 'active-pc', 'parentId' => 'group-1']),
+            $this->item(['id' => 'custom-deleted-pc', 'parentId' => 'custom-deleted']),
+            $this->item(['id' => 'group-1', 'name' => 'Ufficio', 'type' => 4, 'parentId' => 'company-1']),
+            $this->item(['id' => 'deleted-folder', 'name' => 'Deleted', 'type' => 4, 'parentId' => 'company-1']),
+            $this->item(['id' => 'old-office', 'name' => 'Vecchio ufficio', 'type' => 4, 'parentId' => 'deleted-folder']),
+            $this->item(['id' => 'custom-deleted', 'name' => 'Deleted', 'type' => 4, 'parentId' => 'group-1']),
+        ]);
+
+        $this->assertSame(['active-pc', 'custom-deleted-pc'], array_column($this->readInventory(), 'id'));
+        Http::assertSent(fn (Request $request): bool => $request['params'] === $this->endpointParameters('company-1', 1));
+    }
+
     private function fakeInventory(array $items): void
     {
         Http::fakeSequence()->push($this->page([]))->push($this->page($items));
@@ -288,7 +306,7 @@ class GravityZoneInventoryTest extends TestCase
     private function endpointParameters(string $parentId, int $page): array
     {
         return ['parentId' => $parentId, 'page' => $page, 'perPage' => 100, 'filters' => [
-            'type' => ['computers' => true, 'virtualMachines' => true, 'ec2Instances' => true],
+            'type' => ['computers' => true, 'virtualMachines' => true, 'ec2Instances' => true, 'groups' => true],
             'depth' => ['allItemsRecursively' => true],
         ]];
     }

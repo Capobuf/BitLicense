@@ -32,7 +32,7 @@ class CompanyResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table->modifyQueryUsing(fn (Builder $query): Builder => $query->withCount(['computers', 'renewals' => fn (Builder $query): Builder => $query->where('is_regrouped', false)])->withMax('renewals', 'expires_on'))
+        return $table->modifyQueryUsing(fn (Builder $query): Builder => $query->withCount(['computers' => fn (Builder $query): Builder => $query->detected(), 'renewals' => fn (Builder $query): Builder => $query->where('is_regrouped', false)])->withMax('renewals', 'expires_on'))
             ->columns([
                 TextColumn::make('name')->label('Azienda')->searchable()->sortable()->wrap()->weight('semibold'),
                 TextColumn::make('technical_product')->label('Licenza GravityZone')->wrap()->placeholder('Non disponibile'),
