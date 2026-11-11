@@ -208,7 +208,7 @@ class CompanyRenewalsUiTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_common_dates_validate_before_updating_rows_and_allow_individual_changes(): void
+    public function test_common_expiry_keeps_each_start_and_allows_individual_changes(): void
     {
         $company = $this->company();
         $a = Computer::create(['company_id' => $company->id, 'name' => 'PC A']);
@@ -216,21 +216,25 @@ class CompanyRenewalsUiTest extends TestCase
         $page = Livewire::test(CompanyRenewals::class, ['companyId' => $company->id])
             ->mountAction(TestAction::make('create')->table())
             ->set('mountedActions.0.data.computer_ids', [$a->id, $b->id]);
-        $before = $page->get('mountedActions.0.data.periods');
+        $rows = $page->get('mountedActions.0.data.periods');
+        $rows[0]['starts_on'] = '2026-04-20';
+        $rows[1]['starts_on'] = '2026-05-01';
+        $page->setActionData(['periods' => $rows]);
         $page->mountAction(TestAction::make('applyDates')->schemaComponent('periods', 'mountedActionSchema0'))
-            ->setActionData(['starts_on' => '2026-11-04', 'expires_on' => '2026-11-03'])
+            ->setActionData(['expires_on' => null])
             ->callMountedAction()->assertHasActionErrors(['expires_on']);
-        $this->assertSame($before, $page->get('mountedActions.0.data.periods'));
-        $page->setActionData(['starts_on' => '2026-11-04', 'expires_on' => '2027-11-03'])
-            ->callMountedAction()->assertHasNoActionErrors();
+        $this->assertSame($rows, $page->get('mountedActions.0.data.periods'));
+        $page->setActionData(['expires_on' => '2027-04-30'])->callMountedAction()->assertHasNoActionErrors();
         $rows = $page->get('mountedActions.0.data.periods');
         $this->assertSame([$a->id, $b->id], array_column($rows, 'computer_id'));
-        $this->assertSame(['2026-11-04', '2026-11-04'], array_column($rows, 'starts_on'));
-        $this->assertSame(['2027-11-03', '2027-11-03'], array_column($rows, 'expires_on'));
+        $this->assertSame(['2026-04-20', '2026-05-01'], array_column($rows, 'starts_on'));
+        $this->assertSame(['2027-04-30', '2027-04-30'], array_column($rows, 'expires_on'));
         $this->assertDatabaseCount('company_renewals', 0);
-        $rows[array_key_last($rows)]['expires_on'] = '2027-12-31';
+        $rows[1]['expires_on'] = '2027-12-31';
         $page->setActionData(['periods' => $rows])->callMountedAction()->assertHasNoActionErrors();
-        $this->assertSame('2027-11-03', $a->fresh()->expires_on->toDateString());
+        $this->assertSame('2026-04-20', $a->fresh()->activated_on->toDateString());
+        $this->assertSame('2027-04-30', $a->fresh()->expires_on->toDateString());
+        $this->assertSame('2026-05-01', $b->fresh()->activated_on->toDateString());
         $this->assertSame('2027-12-31', $b->fresh()->expires_on->toDateString());
         Http::assertNothingSent();
     }

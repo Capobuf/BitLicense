@@ -13,6 +13,12 @@ class ManageCompanies extends ManageRecords
 
     protected ?string $subheading = 'Consulta vendite, rinnovi e aggiornamenti delle licenze aziendali.';
 
+    public function mount(): void
+    {
+        parent::mount();
+        SynchronizeGravityZoneAction::notifyRequestedOutcome();
+    }
+
     protected function getHeaderActions(): array
     {
         return [SynchronizeGravityZoneAction::make()];

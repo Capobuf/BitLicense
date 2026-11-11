@@ -31,7 +31,7 @@ class EndpointSynchronizer
 
             $settings->forceFill([
                 'endpoints_sync_attempted_at' => now(),
-                'endpoints_sync_error' => 'L’ultimo tentativo non è ancora stato completato.',
+                'endpoints_sync_error' => GravityZoneSetting::SYNC_IN_PROGRESS,
             ])->save();
 
             $count = 0;
@@ -52,7 +52,7 @@ class EndpointSynchronizer
 
                 $company->forceFill([
                     'endpoints_sync_attempted_at' => now(),
-                    'endpoints_sync_error' => 'L’ultimo tentativo non è ancora stato completato.',
+                    'endpoints_sync_error' => GravityZoneSetting::SYNC_IN_PROGRESS,
                 ])->save();
 
                 try {

@@ -268,8 +268,11 @@ class Company extends Model
                         throw ValidationException::withMessages(["periods.$index.starts_on" => 'Collega prima le date già presenti sul computer a una vendita o rinnovo. Potrai poi registrare il periodo successivo.']);
                     }
                     $others = $computer->periods->reject(fn (ComputerPeriod $period): bool => $period->id === $old?->id)->sortBy('starts_on');
-                    if ($others->contains(fn (ComputerPeriod $period): bool => ($row['expires_on'] === null || $period->starts_on->toDateString() <= $row['expires_on']) && ($period->expires_on === null || $period->expires_on?->toDateString() >= $row['starts_on']))) {
-                        throw ValidationException::withMessages(["periods.$index.starts_on" => 'Il periodo si sovrappone a un altro periodo della stessa licenza. La scadenza è l’ultimo giorno incluso.']);
+                    $overlap = $others->first(fn (ComputerPeriod $period): bool => ($row['expires_on'] === null || $period->starts_on->toDateString() <= $row['expires_on']) && ($period->expires_on === null || $period->expires_on?->toDateString() >= $row['starts_on']));
+                    if ($overlap !== null) {
+                        throw ValidationException::withMessages(["periods.$index.starts_on" => $overlap->expires_on === null
+                            ? $computer->display_name.' ha la scadenza da completare in '.$overlap->operation->reference.'. Completala prima con Modifica su quell’operazione, poi registra il periodo successivo.'
+                            : 'Il periodo si sovrappone a un altro periodo della stessa licenza. La scadenza è l’ultimo giorno incluso.']);
                     }
                     if (! $old && $others->isNotEmpty() && ($data['kind'] === 'initial' || $others->last()->expires_on === null || $others->last()->expires_on->toDateString() >= $row['starts_on'])) {
                         throw ValidationException::withMessages(["periods.$index.starts_on" => 'Questo computer ha già uno storico: registra un rinnovo successivo all’ultimo periodo.']);

@@ -123,7 +123,12 @@ class DetectedSalesTest extends TestCase
         $this->reject(fn () => $company->saveCommercialOperation($upgrade, expectedComputerVersions: $this->pcVersions($company)));
         $renewal = ['kind' => 'renewal', 'occurred_on' => '2027-02-07', 'quantity' => 1,
             'periods' => [['computer_id' => $a->id, 'starts_on' => '2027-02-07', 'expires_on' => '2028-02-06']]];
-        $this->reject(fn () => $company->saveCommercialOperation($renewal, expectedComputerVersions: $this->pcVersions($company)));
+        try {
+            $company->saveCommercialOperation($renewal, expectedComputerVersions: $this->pcVersions($company));
+            $this->fail('Expected validation failure');
+        } catch (ValidationException $exception) {
+            $this->assertStringContainsString('ha la scadenza da completare in '.$sale->reference, $exception->errors()['periods.0.starts_on'][0]);
+        }
         Livewire::test(CompanyRenewals::class, ['companyId' => $company->id])
             ->callAction(TestAction::make('edit')->table($sale), data: ['periods' => [['computer_id' => $a->id, 'starts_on' => '2026-02-07', 'expires_on' => '2027-02-06']]])
             ->assertHasNoActionErrors();

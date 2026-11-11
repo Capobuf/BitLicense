@@ -183,8 +183,8 @@ class CompanyRenewals extends Component implements HasActions, HasSchemas, HasTa
                         $set('starts_on', $renewal?->starts_on?->toDateString());
                         $set('expires_on', $renewal?->expires_on?->toDateString());
                     }),
-                DatePicker::make('starts_on')->label('Inizio per questo PC')->native(false)->displayFormat('d/m/Y')->required(),
-                DatePicker::make('expires_on')->label('Scadenza per questo PC')->native(false)->displayFormat('d/m/Y')->required()->afterOrEqual('starts_on'),
+                DatePicker::make('starts_on')->label('Inizio per questo PC')->required(),
+                DatePicker::make('expires_on')->label('Scadenza per questo PC')->required()->afterOrEqual('starts_on'),
             ])
             ->action(function (array $data, Schema $schema, Action $action): void {
                 $renewal = CompanyRenewal::where('company_id', $this->companyId)->where('kind', 'renewal')->whereNotNull('occurred_on')->findOrFail($data['renewal_id']);
@@ -258,7 +258,7 @@ class CompanyRenewals extends Component implements HasActions, HasSchemas, HasTa
                             return $row;
                         }, $get('periods') ?? []));
                     }),
-                DatePicker::make('occurred_on')->label('Data operazione')->native(false)->displayFormat('d/m/Y')
+                DatePicker::make('occurred_on')->label('Data operazione')
                     ->required(fn (?CompanyRenewal $record): bool => $record === null || $record->occurred_on !== null || $this->linkingLegacy),
                 TextInput::make('quantity')->label(fn (Get $get): string => $get('kind') === 'renewal' ? 'Licenze rinnovate' : 'Numero licenze')->live(onBlur: true)->numeric()->integer()->minValue(fn (?CompanyRenewal $record): int => $record?->is_regrouped ? 0 : 1)->maxValue(4294967295)
                     ->required()->visible(fn (Get $get): bool => $get('kind') !== 'upgrade')
@@ -267,9 +267,9 @@ class CompanyRenewals extends Component implements HasActions, HasSchemas, HasTa
             Section::make('Validità del rinnovo')->contained(false)->columns(2)
                 ->visible(fn (Get $get, ?CompanyRenewal $record): bool => $get('kind') === 'renewal' && ($record === null || $record->occurred_on !== null || $this->linkingLegacy))
                 ->schema([
-                    DatePicker::make('starts_on')->label('Inizio')->native(false)->displayFormat('d/m/Y')->live()
+                    DatePicker::make('starts_on')->label('Inizio')->live(onBlur: true)
                         ->required(fn (Get $get): bool => blank($get('periods')))->requiredWith('expires_on'),
-                    DatePicker::make('expires_on')->label('Scadenza inclusa')->native(false)->displayFormat('d/m/Y')->live()
+                    DatePicker::make('expires_on')->label('Scadenza inclusa')->live(onBlur: true)
                         ->required(fn (Get $get): bool => blank($get('periods')))->requiredWith('starts_on')->afterOrEqual('starts_on'),
                 ]),
             Section::make(fn (Get $get): string => $get('kind') === 'renewal' ? 'Computer associati (facoltativo)' : 'Computer')->contained(false)
@@ -300,18 +300,14 @@ class CompanyRenewals extends Component implements HasActions, HasSchemas, HasTa
                         }),
                     Repeater::make('periods')->label('Periodi')->addable(false)->deletable(false)->reorderable(false)->defaultItems(0)->minItems(fn (Get $get): int => $get('kind') === 'renewal' ? 0 : 1)->required(fn (Get $get): bool => $get('kind') !== 'renewal')
                         ->afterLabel([
-                            Action::make('applyDates')->label('Imposta date per tutti')->icon(Heroicon::OutlinedCalendarDays)->color('gray')
+                            Action::make('applyDates')->label('Imposta scadenza per tutti')->icon(Heroicon::OutlinedCalendarDays)->color('gray')
                                 ->visible(fn (Get $get): bool => filled($get('periods')))
-                                ->modalHeading('Imposta le date per tutti i PC')->modalWidth('md')
-                                ->modalDescription('Le date sostituiranno quelle delle righe selezionate. Potrai poi modificarle per ciascun PC.')
-                                ->modalSubmitActionLabel('Applica date')
-                                ->fillForm(fn (?CompanyRenewal $record): array => $this->linkingLegacy ? [
-                                    'starts_on' => $record?->starts_on?->toDateString(),
-                                    'expires_on' => $record?->expires_on?->toDateString(),
-                                ] : [])
+                                ->modalHeading('Imposta la scadenza per tutti i PC')->modalWidth('md')
+                                ->modalDescription('La scadenza sostituirà quella di tutte le righe; le date di inizio restano invariate. Potrai poi modificarla per ciascun PC.')
+                                ->modalSubmitActionLabel('Applica scadenza')
+                                ->fillForm(fn (?CompanyRenewal $record): array => ['expires_on' => $this->linkingLegacy ? $record?->expires_on?->toDateString() : null])
                                 ->schema([
-                                    DatePicker::make('starts_on')->label('Inizio periodo')->native(false)->displayFormat('d/m/Y')->required(),
-                                    DatePicker::make('expires_on')->label('Scadenza inclusa')->native(false)->displayFormat('d/m/Y')->required()->afterOrEqual('starts_on'),
+                                    DatePicker::make('expires_on')->label('Scadenza inclusa')->required(),
                                 ])
                                 ->action(function (array $data, Get $get, Set $set): void {
                                     $set('periods', array_map(fn (array $row): array => array_replace($row, $data), $get('periods') ?? []));
@@ -330,15 +326,15 @@ class CompanyRenewals extends Component implements HasActions, HasSchemas, HasTa
                                 ->state(fn (Get $get): string => $this->computers->find($get('computer_id'))?->display_name ?? 'Computer'),
                             TextEntry::make('assigned_license')->label('Licenza assegnata')
                                 ->state(fn (Get $get): string => $this->computers->find($get('computer_id'))?->company_product ?? 'Non disponibile'),
-                            DatePicker::make('starts_on')->label('Inizio periodo')->native(false)->displayFormat('d/m/Y')->required(),
-                            DatePicker::make('expires_on')->label('Scadenza inclusa')->native(false)->displayFormat('d/m/Y')->nullable()
+                            DatePicker::make('starts_on')->label('Inizio periodo')->required(),
+                            DatePicker::make('expires_on')->label('Scadenza inclusa')->nullable()
                                 ->required(fn (?CompanyRenewal $record): bool => $record === null || ($record->detection_month === null && ! $record->periods->contains('expires_on', null)))->afterOrEqual('starts_on'),
                         ]),
                 ]),
             Section::make('Registro precedente')->description('Questo periodo aziendale non identifica i computer coinvolti. Non vengono ricostruiti collegamenti automaticamente.')
                 ->visible(fn (?CompanyRenewal $record): bool => $record !== null && $record->occurred_on === null && ! $this->linkingLegacy)->columns(2)->schema([
-                    DatePicker::make('starts_on')->label('Inizio')->native(false)->displayFormat('d/m/Y')->required(),
-                    DatePicker::make('expires_on')->label('Scadenza')->native(false)->displayFormat('d/m/Y')->required()->afterOrEqual('starts_on'),
+                    DatePicker::make('starts_on')->label('Inizio')->required(),
+                    DatePicker::make('expires_on')->label('Scadenza')->required()->afterOrEqual('starts_on'),
                 ]),
             Section::make('Upgrade per l’intera azienda')->visible(fn (Get $get): bool => $get('kind') === 'upgrade')
                 ->description('La licenza è quella già assegnata ai PC. La data dell’operazione indica la decorrenza dell’aggiornamento. Le scadenze restano invariate e l’upgrade non conta come rinnovo. Inserisci qui sotto la differenza complessiva per i periodi residui.')

@@ -94,6 +94,7 @@ class Licenze extends Dashboard implements HasTable
     public function mount(): void
     {
         abort_unless(static::canAccess(), 403);
+        SynchronizeGravityZoneAction::notifyRequestedOutcome();
         $companyId = filter_var(request()->query('company'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
         if ($companyId && Company::whereKey($companyId)->exists()) {
             $this->data['company_id'] = $companyId;
@@ -358,14 +359,14 @@ class Licenze extends Dashboard implements HasTable
                     ])->key(fn (?Computer $record): string => 'computer-commercial-'.($record?->id ?? 'new')),
                 ]),
             Section::make('Licenza Commerciale')->icon(Heroicon::OutlinedKey)->visible(fn (?Computer $record): bool => $record === null || $record->effectivePeriod() === null)->columns(2)->schema([
-                DatePicker::make('activated_on')->label('Attivazione')->placeholder('es. 01/01/2026')->native(false)->displayFormat('d/m/Y')->nullable()->live()
+                DatePicker::make('activated_on')->label('Attivazione')->nullable()->live(onBlur: true)
                     ->hint(fn (?Computer $record): ?string => $record?->activation_from_first_seen ? 'Primo rilevamento GravityZone' : null)
                     ->afterStateUpdated(function (mixed $state, Get $get, Set $set): void {
                         if (filled($state) && blank($get('expires_on')) && validator(['date' => $state], ['date' => 'date_format:Y-m-d'])->passes()) {
                             $set('expires_on', CarbonImmutable::parse($state)->addYearNoOverflow()->toDateString());
                         }
                     }),
-                DatePicker::make('expires_on')->label('Scadenza')->placeholder('es. 31/12/2026')->native(false)->displayFormat('d/m/Y')->nullable(),
+                DatePicker::make('expires_on')->label('Scadenza')->nullable(),
                 TextInput::make('amount')->label('Prezzo')->prefix('€')->inputMode('decimal')->nullable()
                     ->rules(['string', 'regex:'.Euro::PATTERN])->maxLength(12)
                     ->validationMessages(['regex' => 'Usa un importo non negativo con al massimo due decimali, senza separatori delle migliaia.']),

@@ -10,6 +10,8 @@ use Illuminate\Database\Eloquent\Model;
 #[Hidden(['api_key'])]
 class GravityZoneSetting extends Model
 {
+    public const SYNC_IN_PROGRESS = 'L’ultimo tentativo non è ancora stato completato.';
+
     public $incrementing = false;
 
     protected function casts(): array
