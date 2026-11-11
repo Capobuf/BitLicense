@@ -32,7 +32,7 @@ class CompanySynchronizer
 
             $settings->forceFill([
                 'companies_sync_attempted_at' => now(),
-                'companies_sync_error' => 'L’ultimo tentativo non è ancora stato completato.',
+                'companies_sync_error' => GravityZoneSetting::SYNC_IN_PROGRESS,
             ])->save();
 
             $client = app(GravityZoneClient::class);

@@ -43,6 +43,36 @@ class BackgroundSynchronizationTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_pages_report_the_requested_update_outcome_once_after_it_runs(): void
+    {
+        $this->travelTo(now()->setDate(2026, 11, 11)->setTime(10, 0));
+        $settings = GravityZoneSetting::find(1);
+        $settings->forceFill(['companies_sync_attempted_at' => now()->subDay(), 'companies_sync_error' => 'Errore precedente.'])->save();
+        Livewire::test(Licenze::class)->callAction('synchronize')->assertNotified('Aggiornamento richiesto');
+        Livewire::test(ManageCompanies::class)->assertNotNotified('Aggiornamento GravityZone non riuscito');
+
+        $this->travel(1)->minutes();
+        $settings->forceFill(['companies_sync_attempted_at' => now(), 'companies_sync_error' => GravityZoneSetting::SYNC_IN_PROGRESS])->save();
+        Livewire::test(Licenze::class)->assertNotNotified('Aggiornamento GravityZone non riuscito');
+        $settings->forceFill(['companies_sync_error' => 'Accesso GravityZone negato. Verifica la chiave API e le sue autorizzazioni.'])->save();
+        Livewire::test(ManageCompanies::class)->assertNotified('Aggiornamento GravityZone non riuscito');
+        $this->assertNull(session('gravityzone-sync-requested-at'));
+        Livewire::test(Licenze::class)->assertNotNotified('Aggiornamento GravityZone non riuscito');
+
+        Cache::forget('gravityzone-sync-requested');
+        Livewire::test(ManageCompanies::class)->callAction('synchronize')->assertNotified('Aggiornamento richiesto');
+        $this->travel(1)->minutes();
+        $settings->forceFill([
+            'companies_sync_attempted_at' => now(), 'companies_sync_error' => null,
+            'endpoints_sync_attempted_at' => now(), 'endpoints_sync_error' => GravityZoneSetting::SYNC_IN_PROGRESS,
+        ])->save();
+        Livewire::test(Licenze::class)->assertNotNotified('Aggiornamento GravityZone completato');
+        $settings->forceFill(['endpoints_sync_error' => null])->save();
+        Livewire::test(Licenze::class)->assertNotified('Aggiornamento GravityZone completato');
+        $this->assertNull(session('gravityzone-sync-requested-at'));
+        Http::assertNothingSent();
+    }
+
     public function test_operators_and_demoted_or_disabled_admins_cannot_request_an_update(): void
     {
         foreach ([Licenze::class, ManageCompanies::class] as $page) {
