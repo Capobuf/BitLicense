@@ -64,17 +64,40 @@ class LicenzeTest extends TestCase
         }
         $other = $this->company();
         $this->computer($other);
-        $expected = ['Computer' => 8, 'Da completare' => 2, 'Scadute' => 2, 'In scadenza' => 2];
+        // The computer no longer reported by GravityZone is hidden and not counted unless explicitly shown.
+        $expected = ['Computer' => 7, 'Da completare' => 2, 'Scadute' => 1, 'In scadenza' => 2];
         $page = Livewire::test(Licenze::class)->set('data.company_id', $company->id);
         $this->assertSame($expected, $page->instance()->getTable()->getHeader()->getData()['metrics']);
-        $page->filterTable('status', 'expired')->assertCountTableRecords(2);
+        $page->filterTable('status', 'expired')->assertCountTableRecords(1);
+        $page->filterTable('absent', true)->assertCountTableRecords(2);
         $this->assertSame($expected, $page->instance()->getTable()->getHeader()->getData()['metrics']);
+        $page->filterTable('absent', false)->assertCountTableRecords(1);
         $page->searchTable('Nessun computer con questo nome')->assertCountTableRecords(0);
         $this->assertSame($expected, $page->instance()->getTable()->getHeader()->getData()['metrics']);
         $page->set('data.company_id', $other->id);
         $this->assertSame(['Computer' => 1, 'Da completare' => 1, 'Scadute' => 0, 'In scadenza' => 0], $page->instance()->getTable()->getHeader()->getData()['metrics']);
         $page->set('data.company_id', $this->company()->id);
         $this->assertSame(['Computer' => 0, 'Da completare' => 0, 'Scadute' => 0, 'In scadenza' => 0], $page->instance()->getTable()->getHeader()->getData()['metrics']);
+        Http::assertNothingSent();
+    }
+
+    public function test_computers_no_longer_detected_stay_hidden_and_uncounted_until_explicitly_shown(): void
+    {
+        $company = $this->company();
+        $other = $this->company();
+        $active = $this->computer($company, ['gravityzone_id' => 'active', 'gravityzone_company_id' => $company->id]);
+        $manual = $this->computer($company);
+        $deleted = $this->computer($company, ['gravityzone_id' => 'deleted', 'gravityzone_company_id' => $company->id, 'is_present' => false,
+            'activated_on' => '2026-01-01', 'expires_on' => '2026-11-01', 'notes' => 'Dati conservati']);
+        $page = Livewire::test(Licenze::class)->set('data.company_id', $company->id)
+            ->assertCanSeeTableRecords([$active, $manual])->assertCanNotSeeTableRecords([$deleted])
+            ->assertSeeHtml('<span class="bl-picker-count">2<');
+        $page->filterTable('absent', true)->assertCanSeeTableRecords([$active, $manual, $deleted])->assertSee('Non più rilevato · dati conservati');
+        $page->set('data.company_id', $other->id)->set('data.company_id', $company->id)->assertCanNotSeeTableRecords([$deleted]);
+        $page->set('data.company_id', 'all')->assertSeeHtml('<strong>2</strong>')->assertDontSeeHtml('<strong>3</strong>');
+        Livewire::test(\App\Filament\Resources\Companies\Pages\ManageCompanies::class)
+            ->assertTableColumnStateSet('computers_count', 2, $company);
+        $this->assertSame('Dati conservati', $deleted->fresh()->notes);
         Http::assertNothingSent();
     }
 
@@ -377,7 +400,7 @@ class LicenzeTest extends TestCase
         Mail::assertNothingSent();
     }
 
-    public function test_missing_stale_and_cross_company_remote_data_remain_visible_without_secrets(): void
+    public function test_missing_stale_and_cross_company_remote_data_remain_available_without_secrets(): void
     {
         $company = $this->company();
         $company->forceFill(['technical_expires_on' => null, 'is_present' => false, 'endpoints_sync_error' => 'Lettura PC fallita.'])->save();
@@ -385,7 +408,8 @@ class LicenzeTest extends TestCase
         $pc = $this->computer($company, ['gravityzone_id' => 'moved', 'gravityzone_company_id' => $other->id, 'is_present' => false]);
         GravityZoneSetting::create(['id' => 1, 'api_url' => 'https://example.test/api', 'api_key' => 'never-render-key'])
             ->forceFill(['endpoints_sync_error' => 'Import incompleto.'])->save();
-        Livewire::test(Licenze::class)->set('data.company_id', $company->id)->assertCanSeeTableRecords([$pc])
+        Livewire::test(Licenze::class)->set('data.company_id', $company->id)->assertCanNotSeeTableRecords([$pc])
+            ->filterTable('absent', true)->assertCanSeeTableRecords([$pc])
             ->assertSee('Non disponibile')->assertSee('Azienda non più rilevata')->assertSee('Lettura PC fallita.')
             ->assertSee('Da verificare: rilevato in')->assertSee('Import incompleto.')->assertDontSee('never-render-key');
         Http::assertNothingSent();

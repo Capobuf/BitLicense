@@ -78,13 +78,17 @@ class DashboardTest extends TestCase
         $this->assertSame([$today->id, $boundary->id], $page->viewData('companies')->pluck('id')->all());
     }
 
-    public function test_absent_computers_and_remote_company_moves_keep_their_local_ownership_and_dates(): void
+    public function test_absent_computers_are_not_counted_and_remote_company_moves_keep_their_local_ownership_and_dates(): void
     {
         $this->actingAs(User::factory()->create());
         $local = $this->company(['technical_expires_on' => '2026-11-03', 'is_present' => false]);
         $remote = $this->company(['technical_expires_on' => '2026-11-03']);
         $this->computer($local, [
             'gravityzone_id' => 'moved-computer', 'gravityzone_company_id' => $remote->id,
+            'activated_on' => '2026-01-01', 'expires_on' => '2026-11-03',
+        ]);
+        $this->computer($local, [
+            'gravityzone_id' => 'deleted-computer', 'gravityzone_company_id' => $local->id,
             'is_present' => false, 'activated_on' => '2026-01-01', 'expires_on' => '2026-11-03',
         ]);
 

@@ -99,6 +99,19 @@ virtuali e istanze EC2 (tipi 5/6/7). Esegue inoltre la ricerca documentata
 dei gruppi Active Directory e la lettura ricorsiva dai relativi ID;
 le sovrapposizioni fra azienda e gruppi vengono deduplicate per ID.
 
+Eliminare un endpoint in GravityZone lo sposta nella cartella predefinita
+**Deleted**, dove resta finché non viene eliminato di nuovo; i PC gestiti vi
+restano anche finché l’agente non è disinstallato
+([Deleting entities](https://www.bitdefender.com/business/support/en/77211-1200701-deleting-entities.html)).
+La lettura ricorsiva include quindi anche i gruppi (`groups: true`, tipo 4,
+con `parentId`): gli endpoint nel gruppo `Deleted` posto direttamente sotto
+l’azienda, o in una sua sottocartella, non vengono importati e i PC locali
+corrispondenti diventano **Non più rilevati**, con dati commerciali conservati.
+Un gruppo omonimo creato altrove non è considerato cestino. Verifica dal vivo
+dell’11/11/2026: ogni azienda espone il gruppo `Deleted` sotto la radice;
+11 PC di 3 aziende vi si trovavano ancora come presenti. Il riconoscimento usa
+il nome restituito dall’API, che nella verifica era `Deleted` per tutte le aziende.
+
 `hasMoreRecords` guida la continuazione; `page`, `perPage` e lista `items`
 sono validati. Totali e numero di pagine non sono necessari sulle pagine
 successive. Una pagina incoerente, un ID duplicato entro lo stesso contenitore

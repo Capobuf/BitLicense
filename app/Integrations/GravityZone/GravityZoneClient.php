@@ -225,15 +225,25 @@ class GravityZoneClient
         }
 
         $endpoints = [];
+        $folders = [];
+        $locations = [];
 
         foreach ($parents as $parentId) {
             foreach (yield from $this->inventoryPages($parentId, $companyId, [
-                'type' => ['computers' => true, 'virtualMachines' => true, 'ec2Instances' => true],
+                'type' => ['computers' => true, 'virtualMachines' => true, 'ec2Instances' => true, 'groups' => true],
                 'depth' => ['allItemsRecursively' => true],
             ], $otherCompanyIds) as $item) {
+                if ($item->type === 4) {
+                    $folders[$item->id] = $item;
+
+                    continue;
+                }
+
                 if (! in_array($item->type, [5, 6, 7], true)) {
                     continue;
                 }
+
+                $locations[$item->id] = $item->parentId ?? null;
 
                 $details = $item->details ?? null;
 
@@ -278,7 +288,19 @@ class GravityZoneClient
             }
         }
 
-        return array_values($endpoints);
+        // Deleting an endpoint moves it into the company's default Deleted folder until it is purged there.
+        $isDeleted = function (?string $folderId) use ($folders, $companyId): bool {
+            for ($visited = []; $folderId !== null && isset($folders[$folderId]) && ! isset($visited[$folderId]); $folderId = $folders[$folderId]->parentId ?? null) {
+                $visited[$folderId] = true;
+                if ($folders[$folderId]->name === 'Deleted' && ($folders[$folderId]->parentId ?? null) === $companyId) {
+                    return true;
+                }
+            }
+
+            return false;
+        };
+
+        return array_values(array_filter($endpoints, fn (array $endpoint): bool => ! $isDeleted($locations[$endpoint['id']])));
     }
 
     private function endpointLicense(mixed $endpoint, string $endpointId, string $companyId): ?int

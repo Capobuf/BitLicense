@@ -95,7 +95,7 @@ class Dashboard extends Page
         $activation = Computer::commercialDateSql('activated_on');
         $expiry = Computer::commercialDateSql('expires_on');
         $periods = Computer::query()->fromSub(
-            Computer::query()->selectRaw("{$activation} AS activated_on, {$expiry} AS expires_on"),
+            Computer::query()->detected()->selectRaw("{$activation} AS activated_on, {$expiry} AS expires_on"),
             'commercial_dates',
         )->select(['activated_on', 'expires_on'])->selectRaw('COUNT(*) AS total')
             ->groupBy('activated_on', 'expires_on')->get();
@@ -109,7 +109,7 @@ class Dashboard extends Page
 
         $companies = Company::query()
             ->select(['id', 'name', 'technical_license_type', 'technical_expires_on', 'is_present', 'is_suspended', 'sync_error', 'gravityzone_type', 'can_manage_security'])
-            ->addSelect(['computers_count' => Computer::query()->selectRaw('COUNT(*)')->whereColumn('company_id', 'companies.id')])
+            ->addSelect(['computers_count' => Computer::query()->detected()->selectRaw('COUNT(*)')->whereColumn('company_id', 'companies.id')])
             ->when($this->companySearch !== '', fn ($query) => $query->whereLike('name', '%'.$this->companySearch.'%'))
             ->when(array_key_exists($this->companyState, self::PERIODS), fn ($query) => $query
                 ->whereDate('technical_expires_on', '>=', $today->toDateString())

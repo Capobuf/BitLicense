@@ -140,7 +140,7 @@ class Licenze extends Dashboard implements HasTable
         return $schema->components([
             Flex::make([
                 View::make('filament.company-picker')->grow(false)->viewData(fn (): array => [
-                    'companies' => $this->companiesQuery()->withCount('computers')->orderBy('name')
+                    'companies' => $this->companiesQuery()->withCount(['computers' => fn (Builder $query): Builder => $query->detected()])->orderBy('name')
                         ->get(['id', 'name', 'is_present', 'is_suspended', 'technical_expires_on']),
                     'licenses' => Company::query()->whereNotNull('technical_product')->where('technical_product', '!=', '')
                         ->distinct()->orderBy('technical_product')->pluck('technical_product'),
@@ -186,7 +186,7 @@ class Licenze extends Dashboard implements HasTable
     private function expandedCompanyIds(): array
     {
         // Dashboard links open only the companies containing matching computers.
-        return $this->expandedCompanies ??= $this->navigationFilters === [] ? [] : Computer::query()
+        return $this->expandedCompanies ??= $this->navigationFilters === [] ? [] : Computer::query()->detected()
             ->inCommercialStatus($this->navigationFilters['status']['value'] ?? null)
             ->expiringBetween($this->navigationFilters['expiry']['from'] ?? null, $this->navigationFilters['expiry']['until'] ?? null)
             ->distinct()->pluck('company_id')->all();
@@ -196,7 +196,7 @@ class Licenze extends Dashboard implements HasTable
     {
         $companies = $this->companiesQuery()->orderBy('name')
             ->get(['id', 'name', 'is_present', 'is_suspended', 'technical_product', 'technical_license_type', 'technical_expires_on']);
-        $statuses = Computer::query()->whereIn('company_id', $companies->modelKeys())->with('periods')
+        $statuses = Computer::query()->whereIn('company_id', $companies->modelKeys())->detected()->with('periods')
             ->get(['id', 'company_id', 'activated_on', 'expires_on'])
             ->groupBy('company_id')->map(fn ($computers) => $computers->countBy(fn (Computer $computer): string => $computer->commercialStatus()));
         [$urgent, $others] = $companies->partition(fn (Company $company): bool => ($statuses[$company->id]['Scaduta'] ?? 0) + ($statuses[$company->id]['In scadenza'] ?? 0) > 0);
@@ -214,10 +214,12 @@ class Licenze extends Dashboard implements HasTable
 
     public function table(Table $table): Table
     {
-        return $table->query(fn (): Builder => Computer::query()->where('company_id', $this->selectedCompanyId())->with(['company', 'gravityzoneCompany'])->withCommercialPeriods())
+        return $table->query(fn (): Builder => Computer::query()->where('company_id', $this->selectedCompanyId())->with(['company', 'gravityzoneCompany'])->withCommercialPeriods()
+            // Applied here rather than in the filter: the computers stay hidden while the filter is inactive or reset.
+            ->when(! ($this->tableFilters['absent']['isActive'] ?? false), fn (Builder $query): Builder => $query->detected()))
             ->header(function () {
                 $company = Company::find($this->selectedCompanyId());
-                $counts = $company === null ? collect() : Computer::query()->where('company_id', $company->id)
+                $counts = $company === null ? collect() : Computer::query()->where('company_id', $company->id)->detected()
                     ->withCommercialPeriods()->get()->countBy(fn (Computer $computer): string => $computer->commercialStatus());
 
                 return view('filament.licenses-company', [
@@ -280,6 +282,7 @@ class Licenze extends Dashboard implements HasTable
                 Filter::make('needs_renewal')->label('Da rinnovare entro 30 giorni o scadute')
                     ->query(fn (Builder $query): Builder => $query->whereDate(DB::raw(Computer::commercialDateSql('expires_on')), '<=', today('Europe/Rome')->addDays(30)->toDateString())
                         ->whereDoesntHave('periods', fn (Builder $periods): Builder => $periods->whereDate('starts_on', '>', today('Europe/Rome')->toDateString()))),
+                Filter::make('absent')->label('Mostra anche i PC non più rilevati')->toggle(),
                 Filter::make('unlinked')->label('Da associare a vendita o rinnovo')
                     ->query(fn (Builder $query): Builder => $query->unlinked()),
                 SelectFilter::make('status')->label('Stato commerciale')->options([
