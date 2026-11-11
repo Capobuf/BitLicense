@@ -271,21 +271,9 @@
     gap: .5rem;
 }
 
-/* Licenze: the picker sits beside the table only when the content area fits both, regardless of the sidebar state. */
-.fi-sc-component:has(> .bl-licenze-layout) {
-    container-type: inline-size;
-}
-
 .fi-sc-flex.fi-from-xl.bl-licenze-layout {
     flex-direction: column;
     align-items: stretch;
-}
-
-@container (min-width: 75rem) {
-    .fi-sc-flex.fi-from-xl.bl-licenze-layout {
-        flex-direction: row;
-        align-items: flex-start;
-    }
 }
 
 .bl-picker {
@@ -422,26 +410,66 @@
 .bl-status-warning { background: var(--warning-500); }
 .bl-status-danger { background: var(--danger-500); }
 
-@container (min-width: 75rem) {
-    .bl-picker {
-        position: sticky;
-        top: 5rem;
-        width: 16rem;
-    }
+/* Licenze: the picker sits beside the table only when the content area is at least 75rem wide:
+   the viewport minus the sidebar (20rem open, 4.5rem collapsed) and 4rem of page padding.
+   Not a container query: container-type would become the containing block of Filament's fixed dropdown panels and misplace them. */
+@media (min-width: 83.5rem) {
+    .fi-body:has(.fi-main-sidebar:not(.fi-sidebar-open)) {
+        & .fi-sc-flex.fi-from-xl.bl-licenze-layout {
+            flex-direction: row;
+            align-items: flex-start;
+        }
 
-    .bl-picker-toggle {
-        display: none;
-    }
+        & .bl-picker {
+            position: sticky;
+            top: 5rem;
+            width: 16rem;
+        }
 
-    .bl-picker-panel {
-        display: grid;
-        gap: .75rem;
-        padding: .75rem;
-    }
+        & .bl-picker-toggle {
+            display: none;
+        }
 
-    .bl-picker-list {
-        grid-template-columns: minmax(0, 1fr);
-        max-height: calc(100vh - 16rem);
+        & .bl-picker-panel {
+            display: grid;
+            gap: .75rem;
+            padding: .75rem;
+        }
+
+        & .bl-picker-list {
+            grid-template-columns: minmax(0, 1fr);
+            max-height: calc(100vh - 16rem);
+        }
+    }
+}
+
+@media (min-width: 99rem) {
+    .fi-body {
+        & .fi-sc-flex.fi-from-xl.bl-licenze-layout {
+            flex-direction: row;
+            align-items: flex-start;
+        }
+
+        & .bl-picker {
+            position: sticky;
+            top: 5rem;
+            width: 16rem;
+        }
+
+        & .bl-picker-toggle {
+            display: none;
+        }
+
+        & .bl-picker-panel {
+            display: grid;
+            gap: .75rem;
+            padding: .75rem;
+        }
+
+        & .bl-picker-list {
+            grid-template-columns: minmax(0, 1fr);
+            max-height: calc(100vh - 16rem);
+        }
     }
 }
 
